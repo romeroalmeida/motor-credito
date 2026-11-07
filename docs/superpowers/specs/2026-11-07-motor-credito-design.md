@@ -33,8 +33,8 @@ motor-credito/
 │   ├── consulta/         → orquestra a consulta e monta a resposta
 │   ├── bureau/           → interface Bureau + adaptador simulado
 │   ├── antifraude/       → checagens que produzem sinais e risco
-│   ├── politica/         → rascunho, versões, publicação; JSON → CEL
-│   ├── motor/            → executa a política publicada (cel-go)
+│   ├── politica/         → modelo JSON → CEL, validação e avaliação (o "motor")
+│   ├── consulta/ … repositorio/ → integração (ver plano de agentes)
 │   ├── tenant/           → clientes, chaves de API, usuários, papéis
 │   └── auditoria/        → registro encadeado, só inserção
 ├── web/                  → painel React
