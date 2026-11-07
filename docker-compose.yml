@@ -1,0 +1,49 @@
+# Desenvolvimento local. Os segredos vêm do .env (copie de .env.example); sem eles o compose recusa subir.
+name: motor-credito
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: motor-credito-postgres
+    environment:
+      POSTGRES_DB: motor
+      POSTGRES_USER: motor_dono
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?defina POSTGRES_APP_PASSWORD no .env}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - motor-credito-pg:/var/lib/postgresql/data
+      - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U motor_dono -d motor"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: .
+    container_name: motor-credito-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AMBIENTE: ${AMBIENTE:-desenvolvimento}
+      DATABASE_URL: postgres://motor_api:${POSTGRES_APP_PASSWORD}@postgres:5432/motor?sslmode=disable
+      DATABASE_URL_MIGRACAO: postgres://motor_dono:${POSTGRES_PASSWORD}@postgres:5432/motor?sslmode=disable
+      CHAVE_HMAC_DOC: ${CHAVE_HMAC_DOC:?defina CHAVE_HMAC_DOC no .env}
+      CHAVE_CIFRA_DOC: ${CHAVE_CIFRA_DOC:?defina CHAVE_CIFRA_DOC no .env}
+      COOKIE_INSEGURO_DEV: ${COOKIE_INSEGURO_DEV:-}
+      SEED_DEMO: ${SEED_DEMO:-}
+    ports:
+      - "127.0.0.1:58080:8080"
+
+  web:
+    build: ./web
+    container_name: motor-credito-web
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:55173:80"
+
+volumes:
+  motor-credito-pg:
