@@ -1,7 +1,14 @@
 import { ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Cartao, Etiqueta, FontesDados, StatusDecisao, TituloCartao } from '@/shared/components'
+import {
+  Cartao,
+  Etiqueta,
+  FontesDados,
+  LimiteCredito,
+  StatusDecisao,
+  TituloCartao,
+} from '@/shared/components'
 import type { Schemas } from '@/shared/types'
 import type { ResultadoSimulador } from '../services/simuladorService'
 import { jsonLegivel } from '../utils/jsonLegivel'
@@ -57,6 +64,11 @@ export function CartaoResposta({ resposta, consultaId }: { resposta: Resposta; c
         )}
       </dl>
       <ExplicacaoErro resposta={resposta} />
+      {decisao?.limite && (
+        <div className="mb-5">
+          <LimiteCredito limite={decisao.limite} />
+        </div>
+      )}
       {decisao && (
         <div className="mb-5 space-y-2">
           <h3 className="text-sm font-semibold">De onde vêm os dados</h3>

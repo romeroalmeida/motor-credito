@@ -45,7 +45,8 @@ export function AbaFaixas({ faixas, avancado, problemas, aoMudar }: AbaFaixasPro
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         A primeira faixa que bater define taxa e limite. Pedido até o limite é aprovado; acima, vai para a
-        contraproposta. Nenhuma faixa batendo nega com SEM_FAIXA.
+        contraproposta (aba Oferta). Sem pedido, quem cai numa faixa que aprova sai pré-aprovado com o limite.
+        Nenhuma faixa batendo nega com SEM_FAIXA.
       </p>
       {problemaDaLista && <AvisoErro>{problemaDaLista.motivo}</AvisoErro>}
       {faixas.map((faixa, i) => {

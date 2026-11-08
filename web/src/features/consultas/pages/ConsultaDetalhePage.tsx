@@ -95,6 +95,7 @@ function Detalhe({ consulta }: { consulta: ConsultaDetalhe }) {
               faixaRisco={consulta.faixa_risco}
               pedido={consulta.pedido}
               oferta={consulta.oferta}
+              limite={consulta.limite}
               motivos={consulta.motivos}
             />
           </Cartao>

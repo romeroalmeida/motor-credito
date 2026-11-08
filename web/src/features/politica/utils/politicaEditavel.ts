@@ -80,6 +80,22 @@ export function paraPolitica(editavel: PoliticaEditavel): Politica {
   }
 }
 
+// Mesmos limites do Compilar (internal/politica): até 12 prazos, cada um de 1 a 420 meses, sem repetir.
+export const PRAZO_MAXIMO_MESES = 420
+export const MAX_PRAZOS_OFERTADOS = 12
+/** O que o motor simula quando a política não lista prazos (cortado no prazo máximo da oferta). */
+export const PRAZOS_PADRAO = [12, 24, 36]
+
+/** Erro ao incluir o prazo digitado, ou null quando cabe na lista. prazoMaximo 0 = sem teto da oferta. */
+export function erroNovoPrazo(prazos: number[], prazo: number, prazoMaximo: number): string | null {
+  if (!Number.isInteger(prazo) || prazo < 1 || prazo > PRAZO_MAXIMO_MESES)
+    return `Prazo de 1 a ${PRAZO_MAXIMO_MESES} meses.`
+  if (prazoMaximo > 0 && prazo > prazoMaximo) return `Acima do prazo máximo da oferta (${prazoMaximo} meses).`
+  if (prazos.includes(prazo)) return 'Esse prazo já está na lista.'
+  if (prazos.length >= MAX_PRAZOS_OFERTADOS) return `No máximo ${MAX_PRAZOS_OFERTADOS} prazos.`
+  return null
+}
+
 export function novoCorte(): CorteEditavel {
   return { chave: novaChave(), codigo: '', texto: '', condicoes: [], cel: '' }
 }
@@ -155,9 +171,17 @@ export function validarLocal(p: PoliticaEditavel): ProblemaRegra[] {
     }
   })
 
-  const { prazo_maximo, acrescimo_taxa_bps } = p.contraproposta
+  const { prazo_maximo, acrescimo_taxa_bps, prazos_ofertados = [] } = p.contraproposta
   if (invalido(prazo_maximo))
     problemas.push({ caminho: 'contraproposta.prazo_maximo', motivo: 'Prazo inválido.' })
+  // O prazo máximo pode ter baixado depois de os prazos entrarem na lista.
+  const acima = prazos_ofertados.filter((prazo) => prazo_maximo > 0 && prazo > prazo_maximo)
+  if (acima.length > 0) {
+    problemas.push({
+      caminho: 'contraproposta.prazos_ofertados',
+      motivo: `Prazos acima do prazo máximo (${prazo_maximo} meses): ${acima.join(', ')}.`,
+    })
+  }
   if (invalido(acrescimo_taxa_bps)) {
     problemas.push({ caminho: 'contraproposta.acrescimo_taxa_bps', motivo: 'Acréscimo inválido.' })
   }

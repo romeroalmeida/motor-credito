@@ -57,7 +57,7 @@ export function modeloEmprestimoPF(): Politica {
         multiplo_renda_x10: 80,
       },
     ],
-    contraproposta: { ativa: true, prazo_maximo: 0, acrescimo_taxa_bps: 0 },
+    contraproposta: { ativa: true, prazo_maximo: 0, acrescimo_taxa_bps: 0, prazos_ofertados: [12, 24, 36] },
     expressao_avancada: false,
   }
 }

@@ -109,7 +109,11 @@ export function FormSimulador({ chaves, enviando, ultimaIdem, aoEnviar }: FormSi
             />
           )}
         </Campo>
-        <Campo rotulo="Valor pedido (R$)" erro={erros.valor}>
+        <Campo
+          rotulo="Valor pedido (R$)"
+          ajuda="Vazio com o prazo vazio: consulta só o limite."
+          erro={erros.valor}
+        >
           {(props) => <Input {...props} inputMode="decimal" {...campo('valor')} />}
         </Campo>
         <Campo rotulo="Prazo (meses)" erro={erros.prazo}>

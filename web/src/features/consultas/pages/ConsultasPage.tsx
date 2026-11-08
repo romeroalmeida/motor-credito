@@ -122,8 +122,14 @@ function ItemConsulta({ consulta }: { consulta: ConsultaResumo }) {
         </span>
         <span className="text-sm tabular-nums">
           <span className="sr-only">Pedido </span>
-          {formatarCentavos(consulta.pedido.valor)}
-          <span className="text-muted-foreground"> em {consulta.pedido.prazo}×</span>
+          {consulta.pedido ? (
+            <>
+              {formatarCentavos(consulta.pedido.valor)}
+              <span className="text-muted-foreground"> em {consulta.pedido.prazo}×</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">Só limite</span>
+          )}
         </span>
         <span className="justify-self-end text-sm text-muted-foreground tabular-nums lg:justify-self-start">
           {formatarDataHora(consulta.criado_em)}

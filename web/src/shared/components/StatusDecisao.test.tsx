@@ -6,6 +6,7 @@ const CASOS: [Status, string, string][] = [
   ['aprovado', 'Aprovado', 'bg-sinal-aprovado'],
   ['negado', 'Negado', 'bg-sinal-negado'],
   ['contraproposta', 'Contraproposta', 'bg-sinal-contraproposta'],
+  ['pre_aprovado', 'Pré-aprovado', 'bg-sinal-pre-aprovado'],
   ['documento_invalido', 'Documento inválido', 'bg-sinal-neutro'],
   ['em_analise', 'Em análise', 'bg-sinal-alerta'],
 ]

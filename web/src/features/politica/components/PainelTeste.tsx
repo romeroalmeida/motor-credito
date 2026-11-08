@@ -48,10 +48,18 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
     const centavos = lerDecimal(valor, 2)
     const meses = lerDecimal(prazo, 0)
     const rendaCentavos = renda ? lerDecimal(renda, 2) : null
+    // Valor e prazo vazios = consulta de limite; só um dos dois é erro no que faltou.
+    const semPedido = !valor.trim() && !prazo.trim()
     const novos: Erros = {
       documento: documentoValido(documento) ? undefined : 'CPF ou CNPJ com dígitos válidos.',
-      valor: centavos > 0 ? undefined : 'Valor em reais, ex.: 10.000,00',
-      prazo: meses >= 1 && meses <= PRAZO_MAXIMO ? undefined : `De 1 a ${PRAZO_MAXIMO} meses.`,
+      valor:
+        semPedido || centavos > 0
+          ? undefined
+          : 'Valor em reais, ex.: 10.000,00 (ou deixe valor e prazo vazios)',
+      prazo:
+        semPedido || (meses >= 1 && meses <= PRAZO_MAXIMO)
+          ? undefined
+          : `De 1 a ${PRAZO_MAXIMO} meses (ou deixe valor e prazo vazios).`,
       renda:
         rendaCentavos === null || Number.isFinite(rendaCentavos)
           ? undefined
@@ -64,7 +72,7 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
     testar.mutate(
       {
         documento,
-        pedido: { valor: centavos, prazo: meses },
+        pedido: semPedido ? undefined : { valor: centavos, prazo: meses },
         dados:
           rendaCentavos === null && !nascimento
             ? undefined
@@ -102,7 +110,11 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
             />
           )}
         </Campo>
-        <Campo rotulo="Valor pedido (R$)" erro={erros.valor}>
+        <Campo
+          rotulo="Valor pedido (R$)"
+          ajuda="Vazio com o prazo vazio: consulta só o limite."
+          erro={erros.valor}
+        >
           {(props) => (
             <Input {...props} inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value)} />
           )}
@@ -145,6 +157,7 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
             score={testar.data.score}
             faixaRisco={testar.data.faixa_risco}
             oferta={testar.data.oferta}
+            limite={testar.data.limite}
             motivos={testar.data.motivos}
           />
           <div className="space-y-2">

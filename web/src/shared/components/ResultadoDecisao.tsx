@@ -44,12 +44,21 @@ interface ResumoDecisaoProps {
   status: Schemas['StatusDecisao']
   score?: number | null
   faixaRisco?: string | null
-  pedido?: Schemas['Pedido']
+  pedido?: Schemas['Pedido'] | null
   oferta?: Schemas['Oferta'] | null
+  limite?: Schemas['Limite'] | null
   motivos: Schemas['Motivo'][]
 }
 
-export function ResumoDecisao({ status, score, faixaRisco, pedido, oferta, motivos }: ResumoDecisaoProps) {
+export function ResumoDecisao({
+  status,
+  score,
+  faixaRisco,
+  pedido,
+  oferta,
+  limite,
+  motivos,
+}: ResumoDecisaoProps) {
   return (
     <div className="@container space-y-5">
       <StatusDecisao status={status} className="text-base" />
@@ -71,6 +80,7 @@ export function ResumoDecisao({ status, score, faixaRisco, pedido, oferta, motiv
           </>
         )}
       </dl>
+      {limite && <LimiteCredito limite={limite} />}
       {motivos.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">Motivos</h3>
@@ -87,6 +97,44 @@ export function ResumoDecisao({ status, score, faixaRisco, pedido, oferta, motiv
         </div>
       )}
     </div>
+  )
+}
+
+/** Limite da faixa e a parcela em cada prazo ofertado pela política (Price, taxa da faixa). */
+export function LimiteCredito({ limite }: { limite: Schemas['Limite'] }) {
+  return (
+    <section aria-labelledby="titulo-limite" className="space-y-3 rounded-xl bg-secondary p-4">
+      <h3 id="titulo-limite" className="text-sm font-semibold">
+        Limite
+      </h3>
+      <dl className="grid grid-cols-2 gap-4">
+        <Dado rotulo="Valor máximo">{formatarCentavos(limite.valor_maximo)}</Dado>
+        <Dado rotulo="Taxa">{formatarTaxaBps(limite.taxa_mensal_bps)}</Dado>
+      </dl>
+      {limite.simulacoes.length > 0 && (
+        <table className="w-full text-sm tabular-nums">
+          <caption className="sr-only">Simulações do limite por prazo</caption>
+          <thead>
+            <tr className="text-left text-xs text-muted-foreground">
+              <th scope="col" className="pb-1 font-normal">
+                Prazo
+              </th>
+              <th scope="col" className="pb-1 text-right font-normal">
+                Parcela
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {limite.simulacoes.map((s) => (
+              <tr key={s.prazo} className="border-t border-border">
+                <td className="py-1.5">{s.prazo}×</td>
+                <td className="py-1.5 text-right font-medium">{formatarCentavos(s.parcela)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }
 

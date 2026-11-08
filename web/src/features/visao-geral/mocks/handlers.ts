@@ -11,13 +11,18 @@ function montar(periodo: VisaoGeral['periodo'], fator: number): VisaoGeral {
     contraproposta: 21 * fator,
     negado: 34 * fator,
     documento_invalido: 4 * fator,
+    pre_aprovado: 12 * fator,
   }
   const total = Object.values(por_status).reduce((a, b) => a + b, 0)
+  // Das 37 negadas, 3 vieram de consulta de limite (sem pedido): ficam fora da taxa de aprovação.
+  const semPedido = por_status.pre_aprovado + 3 * fator
+  const comPedido = total - semPedido
   return {
     periodo,
     total,
     por_status,
-    taxa_aprovacao_bps: Math.round(((por_status.aprovado + por_status.contraproposta) * 10000) / total),
+    taxa_aprovacao_bps: Math.round(((por_status.aprovado + por_status.contraproposta) * 10000) / comPedido),
+    taxa_pre_aprovacao_bps: Math.round((por_status.pre_aprovado * 10000) / semPedido),
     distribuicao_score: [
       { de: 0, ate: 200, quantidade: 6 * fator },
       { de: 201, ate: 300, quantidade: 11 * fator },

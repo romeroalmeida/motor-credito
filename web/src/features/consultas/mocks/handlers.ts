@@ -2,7 +2,7 @@ import { delay, type HttpHandler, http, HttpResponse } from 'msw'
 import type { ApiPaths, Schemas } from '@/shared/types'
 
 // Handlers MSW da feature, montados em src/mocks/handlers.ts (dev e Vitest).
-// 40 consultas determinísticas com os quatro status que a v1 produz.
+// 40 consultas determinísticas com os status que a v1 produz (pré-aprovado = consulta sem pedido).
 
 type Resumo = Schemas['ConsultaResumo']
 type Detalhe = Schemas['ConsultaDetalhe']
@@ -21,6 +21,7 @@ const STATUS: Resumo['status'][] = [
   'aprovado',
   'negado',
   'contraproposta',
+  'pre_aprovado',
 ]
 const PEDIDOS = [500000, 1000000, 250000, 1500000, 800000, 300000]
 const PRAZOS = [12, 24, 36, 18]
@@ -46,12 +47,16 @@ function faixaDoScore(score: number): string {
 
 function montarResumo(i: number): Resumo {
   const status = STATUS[i % STATUS.length] ?? 'aprovado'
-  const pedido = { valor: PEDIDOS[i % PEDIDOS.length] ?? 500000, prazo: PRAZOS[i % PRAZOS.length] ?? 12 }
+  const pedido =
+    status === 'pre_aprovado'
+      ? null
+      : { valor: PEDIDOS[i % PEDIDOS.length] ?? 500000, prazo: PRAZOS[i % PRAZOS.length] ?? 12 }
   const invalido = status === 'documento_invalido'
   const score = invalido ? null : status === 'negado' ? 150 + ((i * 37) % 150) : 420 + ((i * 53) % 560)
   const taxa = score !== null && score > 600 ? 290 : 590
-  const oferta =
-    status === 'aprovado'
+  const oferta = !pedido
+    ? null
+    : status === 'aprovado'
       ? {
           valor: pedido.valor,
           prazo: pedido.prazo,
@@ -86,6 +91,7 @@ const MOTIVOS: Record<Resumo['status'], Schemas['Motivo'][]> = {
   aprovado: [],
   contraproposta: [{ codigo: 'LIMITE_FAIXA', texto: 'Valor pedido acima do limite para o score' }],
   negado: [{ codigo: 'FAIXA_NEGADA', texto: 'A faixa C nega o pedido' }],
+  pre_aprovado: [],
   documento_invalido: [{ codigo: 'DOCUMENTO_INVALIDO', texto: 'Documento com dígito verificador inválido' }],
   em_analise: [],
 }
@@ -144,6 +150,19 @@ function fontesPara(resumo: Resumo, i: number): Pick<Detalhe, 'fontes' | 'score_
   }
 }
 
+const STATUS_COM_LIMITE: Resumo['status'][] = ['aprovado', 'contraproposta', 'pre_aprovado']
+
+function limitePara(resumo: Resumo): Schemas['Limite'] | null {
+  if (!STATUS_COM_LIMITE.includes(resumo.status)) return null
+  const taxa = (resumo.score ?? 0) > 600 ? 290 : 590
+  const valor = taxa === 290 ? 3_000_000 : 1_000_000
+  return {
+    valor_maximo: valor,
+    taxa_mensal_bps: taxa,
+    simulacoes: [12, 24, 36].map((prazo) => ({ prazo, parcela: price(valor, prazo, taxa) })),
+  }
+}
+
 function montarDetalhe(resumo: Resumo, i: number): Detalhe {
   const invalido = resumo.status === 'documento_invalido'
   const comEmail = i % 3 !== 0
@@ -153,6 +172,7 @@ function montarDetalhe(resumo: Resumo, i: number): Detalhe {
     score: resumo.score,
     faixa_risco: resumo.faixa_risco,
     oferta: resumo.oferta,
+    limite: limitePara(resumo),
     pedido: resumo.pedido,
     motivos: MOTIVOS[resumo.status],
     antifraude: invalido

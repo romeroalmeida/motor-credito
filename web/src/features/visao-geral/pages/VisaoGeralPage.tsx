@@ -24,11 +24,19 @@ const PERIODOS: { valor: Periodo; rotulo: string }[] = [
   { valor: '30d', rotulo: '30 dias' },
 ]
 
-const ORDEM_STATUS: Status[] = ['aprovado', 'contraproposta', 'negado', 'documento_invalido', 'em_analise']
+const ORDEM_STATUS: Status[] = [
+  'aprovado',
+  'contraproposta',
+  'pre_aprovado',
+  'negado',
+  'documento_invalido',
+  'em_analise',
+]
 
 const COR_BARRA: Record<Status, string> = {
   aprovado: 'bg-sinal-aprovado',
   contraproposta: 'bg-sinal-contraproposta',
+  pre_aprovado: 'bg-sinal-pre-aprovado',
   negado: 'bg-sinal-negado',
   documento_invalido: 'bg-sinal-neutro',
   em_analise: 'bg-sinal-alerta',
@@ -111,8 +119,19 @@ function Painel({ visao, atualizando }: { visao: VisaoGeral; atualizando: boolea
             <span className="block text-4xl font-semibold tracking-tight tabular-nums">
               {formatarPercentualBps(visao.taxa_aprovacao_bps)}
             </span>
-            <span className="text-sm text-muted-foreground">aprovadas ou com contraproposta</span>
+            <span className="text-sm text-muted-foreground">
+              aprovadas ou com contraproposta, entre as com pedido
+            </span>
           </p>
+          {/* Pré-aprovação não soma em aprovação: cada taxa sobre o próprio tipo de consulta. */}
+          {(visao.por_status.pre_aprovado ?? 0) > 0 && (
+            <p>
+              <span className="block text-4xl font-semibold tracking-tight tabular-nums">
+                {formatarPercentualBps(visao.taxa_pre_aprovacao_bps)}
+              </span>
+              <span className="text-sm text-muted-foreground">pré-aprovadas nas consultas de limite</span>
+            </p>
+          )}
         </div>
         <div aria-hidden="true" className="mt-6 flex h-3 overflow-hidden rounded-full bg-secondary">
           {status.map((s) => (

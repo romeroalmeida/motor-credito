@@ -135,7 +135,11 @@ function fontesDoTeste(
 
 type Contexto = Record<Condicao['campo'], number | string[] | undefined>
 
-function contextoDoDocumento(documento: string, pedido: Schemas['Pedido'], renda?: number): Contexto {
+function contextoDoDocumento(
+  documento: string,
+  pedido: Schemas['Pedido'] | undefined,
+  renda?: number,
+): Contexto {
   const digitos = documento.replace(/\D/g, '')
   const soma = [...digitos].reduce((total, d, i) => total + Number(d) * (i + 7), 0)
   const score = (soma * 37) % 1001
@@ -146,8 +150,8 @@ function contextoDoDocumento(documento: string, pedido: Schemas['Pedido'], renda
     'bureau.divida_total': score < 400 ? 850000 : 0,
     renda,
     idade: 34,
-    'pedido.valor': pedido.valor,
-    'pedido.prazo': pedido.prazo,
+    'pedido.valor': pedido?.valor ?? 0,
+    'pedido.prazo': pedido?.prazo ?? 0,
     'fraude.risco': score % 45,
     'fraude.sinais': score % 3 === 0 ? ['email_descartavel'] : [],
   }
@@ -182,9 +186,16 @@ function parcela(valor: number, prazo: number, taxaBps: number): number {
   return i === 0 ? Math.round(valor / prazo) : Math.round((valor * i) / (1 - (1 + i) ** -prazo))
 }
 
-function simular(p: Politica, ctx: Contexto, pedido: Schemas['Pedido']): Schemas['ResultadoTeste'] {
+// Mesmo padrão do Compilar: sem prazos na política, 12/24/36 cortados no prazo máximo.
+function prazosOfertados({ prazos_ofertados, prazo_maximo }: Politica['contraproposta']): number[] {
+  if (prazos_ofertados && prazos_ofertados.length > 0) return [...prazos_ofertados].sort((a, b) => a - b)
+  const padrao = [12, 24, 36].filter((prazo) => prazo_maximo <= 0 || prazo <= prazo_maximo)
+  return padrao.length > 0 ? padrao : [prazo_maximo]
+}
+
+function simular(p: Politica, ctx: Contexto, pedido?: Schemas['Pedido']): Schemas['ResultadoTeste'] {
   const trilha: Schemas['RegraAvaliada'][] = []
-  const base = { score: ctx.score as number, antifraude: antifraudeDe(ctx) }
+  const base = { score: ctx.score as number, antifraude: antifraudeDe(ctx), limite: null }
   for (const corte of p.cortes) {
     const bateu = regraBate(corte, ctx)
     trilha.push({
@@ -232,6 +243,31 @@ function simular(p: Politica, ctx: Contexto, pedido: Schemas['Pedido']): Schemas
     renda === undefined || faixa.multiplo_renda_x10 === 0
       ? faixa.limite_fixo
       : Math.min(faixa.limite_fixo, Math.floor((renda * faixa.multiplo_renda_x10) / 10))
+  const comLimite = {
+    limite: {
+      valor_maximo: limite,
+      taxa_mensal_bps: faixa.taxa_bps,
+      simulacoes: prazosOfertados(p.contraproposta).map((prazo) => ({
+        prazo,
+        parcela: parcela(limite, prazo, faixa.taxa_bps),
+      })),
+    },
+  }
+  if (!pedido) {
+    if (limite <= 0) {
+      const motivo = { codigo: 'SEM_LIMITE', texto: `A renda não comporta limite na faixa ${faixa.rotulo}` }
+      return { ...base, status: 'negado', faixa_risco: faixa.rotulo, oferta: null, motivos: [motivo], trilha }
+    }
+    return {
+      ...base,
+      ...comLimite,
+      status: 'pre_aprovado',
+      faixa_risco: faixa.rotulo,
+      oferta: null,
+      motivos: [],
+      trilha,
+    }
+  }
   if (pedido.valor <= limite) {
     const oferta = {
       valor: pedido.valor,
@@ -239,7 +275,15 @@ function simular(p: Politica, ctx: Contexto, pedido: Schemas['Pedido']): Schemas
       taxa_mensal_bps: faixa.taxa_bps,
       parcela: parcela(pedido.valor, pedido.prazo, faixa.taxa_bps),
     }
-    return { ...base, status: 'aprovado', faixa_risco: faixa.rotulo, oferta, motivos: [], trilha }
+    return {
+      ...base,
+      ...comLimite,
+      status: 'aprovado',
+      faixa_risco: faixa.rotulo,
+      oferta,
+      motivos: [],
+      trilha,
+    }
   }
   const { ativa, prazo_maximo, acrescimo_taxa_bps } = p.contraproposta
   trilha.push({
@@ -255,6 +299,7 @@ function simular(p: Politica, ctx: Contexto, pedido: Schemas['Pedido']): Schemas
   const taxa = faixa.taxa_bps + acrescimo_taxa_bps
   return {
     ...base,
+    ...comLimite,
     status: 'contraproposta',
     faixa_risco: faixa.rotulo,
     oferta: { valor: limite, prazo, taxa_mensal_bps: taxa, parcela: parcela(limite, prazo, taxa) },

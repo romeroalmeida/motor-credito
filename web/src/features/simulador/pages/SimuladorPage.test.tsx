@@ -69,6 +69,37 @@ describe('simulador de integração', () => {
     server.events.removeAllListeners()
   })
 
+  it('consulta sem valor e prazo mostra Pré-aprovado com o limite e não manda pedido', async () => {
+    let enviado: { requisicao?: Record<string, unknown> } | undefined
+    server.events.on('request:start', async ({ request }) => {
+      if (request.url.endsWith('/painel/simulador/consultas')) enviado = await request.clone().json()
+    })
+    const usuario = await abrir()
+    await usuario.click(exemplo('Pré-aprovação'))
+    expect(screen.getByLabelText('Valor pedido (R$)')).toHaveValue('')
+    expect(screen.getByLabelText('Prazo (meses)')).toHaveValue('')
+    await usuario.click(screen.getByRole('button', { name: 'Enviar consulta' }))
+
+    const resposta = await screen.findByRole('region', { name: 'Resposta' })
+    expect(within(resposta).getByText('Pré-aprovado')).toBeInTheDocument()
+    const limite = within(resposta).getByRole('region', { name: 'Limite' })
+    expect(within(limite).getByText('R$ 30.000,00')).toBeInTheDocument()
+    expect(within(limite).getByText('2,90% a.m.')).toBeInTheDocument()
+    expect(within(limite).getAllByRole('row')).toHaveLength(4)
+    expect(enviado?.requisicao).not.toHaveProperty('pedido')
+    expect(enviado?.requisicao).toMatchObject({ dados: { renda: 500000 } })
+    server.events.removeAllListeners()
+  })
+
+  it('só o valor, sem prazo, é barrado antes de enviar', async () => {
+    const usuario = await abrir()
+    await usuario.click(exemplo('Aprovado'))
+    await usuario.clear(screen.getByLabelText('Prazo (meses)'))
+    await usuario.click(screen.getByRole('button', { name: 'Enviar consulta' }))
+    expect(screen.getByLabelText('Prazo (meses)')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.queryByRole('region', { name: 'Resposta' })).not.toBeInTheDocument()
+  })
+
   it('abas trocam o código entre curl, Node e Python', async () => {
     const usuario = await abrir()
     await usuario.click(exemplo('Aprovado'))

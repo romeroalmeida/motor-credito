@@ -29,6 +29,8 @@
   --sinal-aprovado: oklch(0.72 0.17 155);
   --sinal-negado: oklch(0.63 0.22 25);
   --sinal-contraproposta: oklch(0.6 0.2 285);
+  /* Pré-aprovado: azul informativo, longe do verde de aprovado (não é concessão). */
+  --sinal-pre-aprovado: oklch(0.64 0.14 240);
   --sinal-alerta: oklch(0.78 0.16 75);
   --sinal-neutro: oklch(0.65 0.01 260);
 

@@ -9,12 +9,27 @@ import type { EntradaSimulador, ResultadoSimulador } from '../services/simulador
 const CHAVE_REVOGADA = '01JC8ZK3Q0HOMOLOGACAO00000'
 const ASSINATURA_FALSA = 'f'.repeat(64)
 
-function decidir(documento: string, valor: number): StatusDecisao {
+// Sem pedido (valor undefined) = consulta de limite: quem não é negado sai pré-aprovado, nunca aprovado.
+function decidir(documento: string, valor: number | undefined): StatusDecisao {
   const doc = documento.replace(/\D/g, '')
   if (doc === '00000000353') return 'negado'
   if (doc === '00000000191' || doc === '12345678900') return 'documento_invalido'
+  if (valor === undefined) return 'pre_aprovado'
   if (doc === '00000000434' && valor > 2_000_000) return 'contraproposta'
   return 'aprovado'
+}
+
+const COM_LIMITE: StatusDecisao[] = ['aprovado', 'contraproposta', 'pre_aprovado']
+
+/** Limite da faixa A do modelo PF (R$ 30.000,00 a 2,90% a.m.); parcelas de dinheiro.Parcela no Go. */
+const LIMITE_EXEMPLO: Schemas['Limite'] = {
+  valor_maximo: 3_000_000,
+  taxa_mensal_bps: 290,
+  simulacoes: [
+    { prazo: 12, parcela: 299_590 },
+    { prazo: 24, parcela: 175_239 },
+    { prazo: 36, parcela: 135_369 },
+  ],
 }
 
 const porIdem = new Map<string, ResultadoSimulador>()
@@ -28,10 +43,12 @@ function executar(entrada: EntradaSimulador): ResultadoSimulador {
   if (guardado && guardado.requisicao.corpo === corpo) return guardado
   const { documento, pedido } = entrada.requisicao
   const id = `cons_01JCSIMULADOR${String(sequencia).padStart(12, '0')}`
+  const status = decidir(documento, pedido?.valor)
   const decisao: Schemas['ConsultaResposta'] = {
     id,
-    status: decidir(documento, pedido.valor),
-    pedido,
+    status,
+    pedido: pedido ?? null,
+    limite: COM_LIMITE.includes(status) ? LIMITE_EXEMPLO : null,
     motivos: [],
     criado_em: new Date().toISOString(),
     fontes: { cadastro: 'simulado', score: 'simulado', restricoes: 'simulado' },

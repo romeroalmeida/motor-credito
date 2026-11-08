@@ -10,6 +10,7 @@ import type { FiltrosConsultas as Filtros } from '../services/consultasService'
 const OPCOES_STATUS: { valor: StatusDecisao; rotulo: string }[] = [
   { valor: 'aprovado', rotulo: 'Aprovado' },
   { valor: 'contraproposta', rotulo: 'Contraproposta' },
+  { valor: 'pre_aprovado', rotulo: 'Pré-aprovado' },
   { valor: 'negado', rotulo: 'Negado' },
   { valor: 'documento_invalido', rotulo: 'Documento inválido' },
 ]

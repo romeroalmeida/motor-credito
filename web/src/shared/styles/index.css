@@ -36,6 +36,7 @@
   --color-sinal-aprovado: var(--sinal-aprovado);
   --color-sinal-negado: var(--sinal-negado);
   --color-sinal-contraproposta: var(--sinal-contraproposta);
+  --color-sinal-pre-aprovado: var(--sinal-pre-aprovado);
   --color-sinal-alerta: var(--sinal-alerta);
   --color-sinal-neutro: var(--sinal-neutro);
 

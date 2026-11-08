@@ -267,11 +267,7 @@ function EditorPolitica({ estado }: { estado: PoliticaEstado }) {
             <TabsList className="h-auto w-full group-data-horizontal/tabs:h-auto flex-wrap justify-start gap-1 rounded-xl bg-card p-1 shadow-card sm:w-fit">
               <AbaGatilho valor="cortes" rotulo="Corte" problemas={contagem('cortes')} />
               <AbaGatilho valor="faixas" rotulo="Faixas" problemas={contagem('faixas')} />
-              <AbaGatilho
-                valor="contraproposta"
-                rotulo="Contraproposta"
-                problemas={contagem('contraproposta')}
-              />
+              <AbaGatilho valor="contraproposta" rotulo="Oferta" problemas={contagem('contraproposta')} />
               <AbaGatilho valor="historico" rotulo="Histórico" problemas={0} />
             </TabsList>
             <TabsContent value="cortes" className="pt-2">

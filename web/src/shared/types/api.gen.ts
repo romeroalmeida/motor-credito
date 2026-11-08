@@ -64,6 +64,10 @@ export interface paths {
      *     Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
      *     trocando a chave de idempotência.
      *
+     *     Pedido opcional: sem `pedido` a consulta é de limite (pré-aprovação). Quem passa nos cortes e cai numa faixa
+     *     que aprova recebe `pre_aprovado`, `oferta` null e `limite` (valor máximo, taxa e parcelas nos prazos
+     *     ofertados pela política). Pedido parcial (só valor ou só prazo) é 400 no campo que faltou.
+     *
      *     Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
      *
      *     ```sh
@@ -1075,7 +1079,8 @@ export interface paths {
         content: {
           'application/json': {
             documento: string
-            pedido: components['schemas']['Pedido']
+            /** @description Opcional; ausente = consulta de limite (pre_aprovado) */
+            pedido?: components['schemas']['Pedido']
             dados?: components['schemas']['DadosOpcionais']
             /** @description Se ausente, usa o rascunho salvo */
             politica?: components['schemas']['Politica']
@@ -1572,12 +1577,14 @@ export interface components {
       }[]
     }
     /**
-     * @description em_analise é reservado para a v2
+     * @description pre_aprovado só sai de consulta sem pedido (nunca é aprovação); em_analise é reservado para a v2
      * @enum {string}
      */
-    StatusDecisao: 'aprovado' | 'negado' | 'contraproposta' | 'documento_invalido' | 'em_analise'
+    StatusDecisao:
+      'aprovado' | 'negado' | 'contraproposta' | 'pre_aprovado' | 'documento_invalido' | 'em_analise'
     /** @enum {string} */
     Papel: 'admin' | 'analista' | 'auditor'
+    /** @description Opcional na consulta; se vier, valor e prazo são obrigatórios (parcial → 400 no campo que faltou) */
     Pedido: {
       /**
        * Format: int64
@@ -1612,7 +1619,8 @@ export interface components {
       documento: string
       /** @enum {string} */
       finalidade: 'concessao_credito'
-      pedido: components['schemas']['Pedido']
+      /** @description Ausente = consulta de limite (pré-aprovação) */
+      pedido?: components['schemas']['Pedido']
       dados?: components['schemas']['DadosOpcionais']
     }
     Oferta: {
@@ -1629,6 +1637,26 @@ export interface components {
        */
       parcela: number
     }
+    Simulacao: {
+      /** @description Meses */
+      prazo: number
+      /**
+       * Format: int64
+       * @description Centavos (Price
+       */
+      parcela: number
+    }
+    /** @description Crédito máximo da faixa e simulações nos prazos ofertados da política */
+    Limite: {
+      /**
+       * Format: int64
+       * @description Centavos: min(limite fixo, renda × múltiplo); sem renda, o fixo
+       */
+      valor_maximo: number
+      /** @description Taxa da faixa */
+      taxa_mensal_bps: number
+      simulacoes: components['schemas']['Simulacao'][]
+    }
     Motivo: {
       /**
        * @description Os de corte vêm da política. Falhas sempre negam: BUREAU_INDISPONIVEL (erro ou > 2s),
@@ -1636,6 +1664,7 @@ export interface components {
        * @example LIMITE_FAIXA
        * @example SEM_FAIXA
        * @example FAIXA_NEGADA
+       * @example SEM_LIMITE
        * @example BUREAU_INDISPONIVEL
        * @example DOCUMENTO_INVALIDO
        * @example ANTIFRAUDE_INDISPONIVEL
@@ -1675,7 +1704,10 @@ export interface components {
       score?: number | null
       faixa_risco?: string | null
       oferta?: components['schemas']['Oferta'] | null
-      pedido: components['schemas']['Pedido']
+      /** @description Presente quando aprova, contrapropõe ou pré-aprova; null quando nega ou o documento é inválido */
+      limite: components['schemas']['Limite'] | null
+      /** @description null na consulta de limite */
+      pedido: components['schemas']['Pedido'] | null
       motivos: components['schemas']['Motivo'][]
       antifraude?: components['schemas']['Antifraude'] | null
       politica?: components['schemas']['PoliticaRef'] | null
@@ -1812,7 +1844,7 @@ export interface components {
       status: components['schemas']['StatusDecisao']
       score?: number | null
       faixa_risco?: string | null
-      pedido: components['schemas']['Pedido']
+      pedido: components['schemas']['Pedido'] | null
       oferta?: components['schemas']['Oferta'] | null
       antifraude_risco?: number | null
       politica_versao?: number | null
@@ -1876,12 +1908,19 @@ export interface components {
       /** @description 30 = 3,0× renda */
       multiplo_renda_x10: number
     }
+    /** @description No painel o bloco se chama "Oferta"; o nome no JSON fica por compatibilidade */
     Contraproposta: {
       ativa: boolean
       /** @description 0 = mantém o prazo pedido */
       prazo_maximo: number
       /** @description Teto 100000; acima → 422, regra contraproposta */
       acrescimo_taxa_bps: number
+      /**
+       * @description Prazos (meses) das simulações do limite. 1 a 12, sem repetir, até prazo_maximo quando > 0
+       *     (senão 422 na regra contraproposta.prazos_ofertados); o motor usa ordenado. Vazio ou ausente = [12, 24, 36]
+       *     (cortado no prazo_maximo), para as versões publicadas antes do campo.
+       */
+      prazos_ofertados?: number[]
     }
     Politica: {
       cortes: components['schemas']['Corte'][]
@@ -1927,6 +1966,7 @@ export interface components {
       score?: number | null
       faixa_risco?: string | null
       oferta?: components['schemas']['Oferta'] | null
+      limite: components['schemas']['Limite'] | null
       motivos: components['schemas']['Motivo'][]
       antifraude?: components['schemas']['Antifraude'] | null
       trilha: components['schemas']['RegraAvaliada'][]
@@ -1998,8 +2038,10 @@ export interface components {
       por_status: {
         [key: string]: number
       }
-      /** @description (aprovado + contraproposta) / total, em pontos-base (6500 = 65%) */
+      /** @description (aprovado + contraproposta) / consultas com pedido, em pontos-base (6500 = 65%). Pré-aprovado não entra */
       taxa_aprovacao_bps: number
+      /** @description pre_aprovado / consultas sem pedido (de limite), em pontos-base */
+      taxa_pre_aprovacao_bps: number
       distribuicao_score: {
         de: number
         ate: number

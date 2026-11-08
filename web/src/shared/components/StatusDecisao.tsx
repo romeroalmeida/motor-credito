@@ -5,6 +5,7 @@ const APARENCIA: Record<Status, { rotulo: string; bolinha: string }> = {
   aprovado: { rotulo: 'Aprovado', bolinha: 'bg-sinal-aprovado' },
   negado: { rotulo: 'Negado', bolinha: 'bg-sinal-negado' },
   contraproposta: { rotulo: 'Contraproposta', bolinha: 'bg-sinal-contraproposta' },
+  pre_aprovado: { rotulo: 'Pré-aprovado', bolinha: 'bg-sinal-pre-aprovado' },
   documento_invalido: { rotulo: 'Documento inválido', bolinha: 'bg-sinal-neutro' },
   em_analise: { rotulo: 'Em análise', bolinha: 'bg-sinal-alerta' },
 }

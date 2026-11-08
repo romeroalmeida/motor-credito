@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/shared/lib/utils'
 
-export type Tom = 'aprovado' | 'negado' | 'contraproposta' | 'alerta' | 'neutro'
+export type Tom = 'aprovado' | 'negado' | 'contraproposta' | 'pre_aprovado' | 'alerta' | 'neutro'
 
 const BOLINHA: Record<Tom, string> = {
   aprovado: 'bg-sinal-aprovado',
   negado: 'bg-sinal-negado',
   contraproposta: 'bg-sinal-contraproposta',
+  pre_aprovado: 'bg-sinal-pre-aprovado',
   alerta: 'bg-sinal-alerta',
   neutro: 'bg-sinal-neutro',
 }
