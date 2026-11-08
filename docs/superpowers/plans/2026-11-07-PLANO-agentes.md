@@ -1,5 +1,13 @@
 # Plano de execução por agentes — motor-credito
 
+> **Estado em 07/11: executado.** O plano abaixo fica como registro; o que mudou depois está no desenho (§4 e §7).
+>
+> - **F — Fundação** (`0c9faf1`…`7a3d459`): documento, dinheiro, plataforma, schema com RLS, compose, CI e OpenAPI.
+> - **Onda 1** (merges `7eda26c`, `c06220c`, `2943094`, `09c600e`): A tenant/auth do painel, B política e motor CEL, C bureau simulado e antifraude, D painel com MSW.
+> - **E — integração** (`d910d88`…`6b541ff`): repositório por tenant, orquestração fail-closed, router HTTP, semente, auditoria encadeada, troca do MSW pela API real e e2e contra a pilha do compose.
+> - **Conferências** (`938b950`, `docs/conferencias/`): auth e regra de crédito, sem achado crítico. Correções em `065b283` (regra) e `67b4342` (auth): Bearer só com o id e segredo cifrado assinando `ts.idem.corpo`, idempotência reservada antes de decidir, `PROXIES_CONFIAVEIS`, limites de login e 2FA, sessão ociosa, CSP, auditoria de chaves/equipe/acesso, tetos de valor e taxa.
+> - **Acabamento**: CNPJ real via BrasilAPI (`BUREAU_CNPJ`), AAD = id da consulta no documento cifrado, job de retenção LGPD (`cmd/retencao`), coleção Postman validada com newman e README de portfólio.
+
 Desenho: `docs/superpowers/specs/2026-11-07-motor-credito-design.md` (**leia antes de tudo**).
 Este arquivo é o **contrato**: pastas, donos, interfaces e regras. O que não está aqui segue o desenho.
 

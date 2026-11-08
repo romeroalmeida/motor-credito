@@ -1,6 +1,6 @@
 # Motor de Crédito — Desenho
 
-**Data:** 07/11/2026 · **Estado:** desenho aprovado em conversa, aguardando revisão do documento
+**Data:** 07/11/2026 · **Estado:** desenho aprovado em conversa, aguardando revisão do documento · **Atualizado em 07/11/2026** (após as conferências): §4 e §7 refletem a assinatura nova, o CNPJ via BrasilAPI, a retenção e a auditoria de acesso.
 
 ## 1. Objetivo
 
@@ -64,30 +64,35 @@ motor-credito/
 ## 4. Segurança e LGPD
 
 **API dos clientes**
-- Chave `ck_live_<id>_<segredo>`. O banco guarda só o SHA-256 do segredo, que aparece uma vez na criação. Dá para girar e revogar.
-- Assinatura HMAC-SHA256 de `timestamp + corpo` no cabeçalho `X-Assinatura`. Requisições com timestamp acima de 5 min são recusadas.
-- `Idempotency-Key`: reenvio não duplica registro nem cobrança.
+- A chave tem duas partes: o id público `ck_live_<id>`, que vai em `Authorization: Bearer ck_live_<id>`, e o segredo, que aparece uma vez na criação e **nunca trafega**. O banco guarda o segredo cifrado (AES-256-GCM, subchave própria derivada por HKDF, AAD = id da chave), porque o servidor precisa dele para conferir a assinatura. Dá para girar e revogar. *(Atualizado em 07/11 — conferência de auth, achado 2: antes o Bearer levava a chave inteira e ela mesma era a chave do HMAC, o que não provava posse.)*
+- `X-Assinatura = hex(HMAC-SHA256(segredo, X-Timestamp + "." + Idempotency-Key + "." + corpo cru))` (`tenant.Assinar`). A `Idempotency-Key` entra na assinatura: não dá para reaproveitar um corpo assinado com outra chave de idempotência. Timestamp fora de ±5 min é recusado.
+- `Idempotency-Key`: reenvio não duplica registro nem cobrança. A chave é reservada com o hash do corpo antes de decidir (trava por tenant + chave), então duas requisições simultâneas com corpos diferentes nunca recebem a decisão uma da outra (409).
 - Limite de requisições por cliente e lista de IPs permitidos opcional.
+- IP do cliente: atrás do nginx, `X-Forwarded-For` só vale se a conexão vier de um proxy listado em `PROXIES_CONFIAVEIS` (vazio = ninguém; usa o endereço da conexão). Serve ao limite de login por IP, à lista de IPs da chave e à auditoria.
 
 **Painel**
-- Senha com argon2id + 2FA TOTP obrigatório.
+- Senha com argon2id (teto de cálculos simultâneos) + 2FA TOTP obrigatório, com trava persistente após 5 falhas seguidas e limite de tentativas de login por IP.
+- Sessão expira em 12 h ou depois de 30 min sem uso.
 - Cookie httpOnly, Secure, SameSite=Strict + token CSRF.
 - Papéis: `admin` (política, chaves, equipe), `analista` (consultas), `auditor` (só auditoria).
 - Toda publicação de política exige confirmação e grava quem publicou e quando.
+- Cadastro por convite responde o mesmo 404 para convite inválido e para e-mail que já tem conta (não revela quem tem conta).
 
 **Isolamento entre clientes**
 - `tenant_id` em toda tabela + Row-Level Security no Postgres como segunda barreira.
 - Teste obrigatório: o cliente A pede uma consulta do cliente B e recebe 404.
 
 **LGPD**
-- CPF/CNPJ guardado de duas formas: HMAC com chave secreta (busca e velocidade) e cifrado com AES-256-GCM (exibição ao dono da consulta). Nunca em texto puro. Log mostra mascarado (`***.456.789-**`).
+- CPF/CNPJ guardado de duas formas: HMAC com chave secreta (busca e velocidade) e cifrado com AES-256-GCM com AAD = id da consulta (exibição ao dono da consulta; o cifrado copiado para outra linha não decifra, e o painel mostra `***`). Nunca em texto puro. Log mostra mascarado (`***.456.789-**`).
 - Cada consulta declara a finalidade (`concessao_credito`) e a base legal (proteção ao crédito, art. 7º, X). Ambas ficam registradas.
-- Retenção configurável, padrão de 5 anos. Depois, um job apaga os dados pessoais e mantém só os agregados.
+- Retenção configurável, padrão de 5 anos. Depois, um job apaga os dados pessoais e mantém só os agregados. *(Implementado:* `cmd/retencao`, `RETENCAO_DIAS` padrão 1825, inteiro ≥ 1. Apaga `doc_cifrado`, `doc_hash` — que permitiria reidentificar pela busca — e a `Idempotency-Key`; mantém status, score, faixa, valores, política e versão; marca `dados_apagados_em`; apaga eventos de velocidade anteriores ao corte. Roda com o usuário da aplicação e a RLS valendo, é idempotente e registra `lgpd.retencao_aplicada` na auditoria de cada tenant. Agendamento: `docker compose --profile retencao run --rm retencao` no cron do host.*)*
+- Fonte de CNPJ: com `BUREAU_CNPJ=brasilapi`, o cadastro (razão social, situação, abertura) vem da Receita via BrasilAPI e o resto do simulado; CPF nunca sai para a rede. Só dado público de empresa; o quadro de sócios é descartado.
 - Endpoint de explicação da decisão para atender o titular.
 
 **Auditoria**
 - Tabela só de inserção: o usuário do banco que a aplicação usa não tem `UPDATE`/`DELETE` nela.
 - Cada registro guarda o hash do anterior, então alteração manual é detectável.
+- Eventos: consulta decidida, política publicada, chaves (criar, girar, revogar, IPs), equipe (convite, aceite, remoção, troca de papel), acesso ao painel (login ok, senha errada, 2FA errado, saída) e retenção LGPD aplicada.
 
 **Cadeia de dependências e segredos**
 - Segredos só por variável de ambiente; `.env.example` sem valores.
@@ -166,7 +171,7 @@ A velocidade entre clientes não revela qual cliente consultou o documento.
 }
 ```
 
-Cabeçalhos: `Authorization: Bearer ck_live_…`, `X-Timestamp`, `X-Assinatura`, `Idempotency-Key`.
+Cabeçalhos: `Authorization: Bearer ck_live_<id>` (só o id; o segredo nunca vai em cabeçalho), `X-Timestamp` (unix, segundos), `Idempotency-Key` e `X-Assinatura = hex(HMAC-SHA256(segredo, ts + "." + idempotency_key + "." + corpo))`. Ver §4.
 
 **Resposta**
 
@@ -192,7 +197,7 @@ Cabeçalhos: `Authorization: Bearer ck_live_…`, `X-Timestamp`, `X-Assinatura`,
 
 `status` ∈ `aprovado | negado | contraproposta | documento_invalido | em_analise` (este último reservado para a v2). Valores em centavos.
 
-**Erros:** 400 (corpo inválido), 401 (chave ou assinatura), 409 (mesma `Idempotency-Key` com corpo diferente), 429 (limite), 503 nunca. Indisponibilidade de bureau vira decisão `negado`, não erro.
+**Erros:** 400 (corpo inválido), 401 (chave ou assinatura), 409 (mesma `Idempotency-Key` com corpo diferente), 429 (limite), 503 nunca. Indisponibilidade de bureau (inclusive a BrasilAPI fora do ar ou com 429) vira decisão `negado` com `BUREAU_INDISPONIVEL`, não erro. CNPJ que a Receita não conhece (404 na BrasilAPI) vira `documento_invalido`.
 
 Contrato publicado em OpenAPI, com exemplos em `curl`, Node e Python.
 
