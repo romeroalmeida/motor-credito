@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
 )
@@ -15,6 +16,7 @@ type Entrada struct {
 	Tipo                                  string // "cpf"|"cnpj"
 	Nome, Nascimento, Email, IP, DeviceID string
 	Bureau                                bureau.Resultado
+	Referencia                            time.Time // data da consulta; zero = agora (testes injetam)
 }
 
 // Resultado: Risco 0..100, sinais disparados e as checagens executadas e puladas (por falta de dado).
@@ -40,6 +42,7 @@ const (
 	SinalIPEstrangeiro            = "ip_estrangeiro"
 	SinalIPDatacenter             = "ip_datacenter"
 	SinalDispositivoMultiplosCPFs = "dispositivo_multiplos_cpfs"
+	SinalCNPJRecente              = "cnpj_recente"
 )
 
 // Pesos de cada sinal no risco.
@@ -52,6 +55,7 @@ const (
 	PesoIPEstrangeiro        = 15
 	PesoIPDatacenter         = 20
 	PesoDispositivo          = 30
+	PesoCNPJRecente          = 20
 	RiscoMaximo              = 100
 )
 
@@ -59,6 +63,8 @@ const (
 const (
 	LimiteConsultasDoc24h       = 5
 	LimiteDocsPorDispositivo24h = 2
+	// CNPJ com menos dias de abertura que isto dispara cnpj_recente.
+	DiasCNPJRecente = 180
 )
 
 var pesos = map[string]int{
@@ -71,6 +77,7 @@ var pesos = map[string]int{
 	SinalIPEstrangeiro:            PesoIPEstrangeiro,
 	SinalIPDatacenter:             PesoIPDatacenter,
 	SinalDispositivoMultiplosCPFs: PesoDispositivo,
+	SinalCNPJRecente:              PesoCNPJRecente,
 }
 
 // checagem devolve executou=false quando falta o dado de que precisa.
@@ -111,19 +118,41 @@ func Avaliar(ctx context.Context, e Entrada, c Contador) (Resultado, error) {
 	return r, nil
 }
 
-// checarDocumento: irregular/inativo pontua; falecido não (E transforma em documento_invalido).
+// checarDocumento: irregular/inativo pontua; falecido e inexistente não (E transforma em documento_invalido).
+// CNPJ aberto há menos de DiasCNPJRecente dias pontua cnpj_recente.
 func checarDocumento(_ context.Context, e Entrada, _ Contador) (bool, []string, error) {
 	s := e.Bureau.Situacao
-	if s == "" {
+	abertura, temAbertura := diaUTC(e.Bureau.Abertura)
+	temAbertura = temAbertura && e.Tipo == "cnpj"
+	if s == "" && !temAbertura {
 		return false, nil, nil
 	}
-	if s != bureau.Irregular && s != bureau.Inativo {
-		return true, nil, nil
+	var sinais []string
+	switch {
+	case s != bureau.Irregular && s != bureau.Inativo:
+	case e.Tipo == "cnpj":
+		sinais = append(sinais, SinalCNPJInativo)
+	default:
+		sinais = append(sinais, SinalCPFIrregular)
 	}
-	if e.Tipo == "cnpj" {
-		return true, []string{SinalCNPJInativo}, nil
+	if temAbertura {
+		ref := e.Referencia
+		if ref.IsZero() {
+			ref = time.Now()
+		}
+		hoje := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, time.UTC)
+		// abertura no futuro (dado ruim) também conta como recente: fail-closed
+		if hoje.Sub(abertura) < DiasCNPJRecente*24*time.Hour {
+			sinais = append(sinais, SinalCNPJRecente)
+		}
 	}
-	return true, []string{SinalCPFIrregular}, nil
+	return true, sinais, nil
+}
+
+// diaUTC lê AAAA-MM-DD; ok=false se vazio ou malformado.
+func diaUTC(s string) (time.Time, bool) {
+	d, err := time.Parse(time.DateOnly, strings.TrimSpace(s))
+	return d, err == nil
 }
 
 func checarVelocidade(ctx context.Context, e Entrada, c Contador) (bool, []string, error) {

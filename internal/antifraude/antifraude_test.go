@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
 )
@@ -124,6 +125,8 @@ func TestSituacaoDocumento(t *testing.T) {
 		{"cpf", bureau.Falecido, nil}, // E trata como documento_invalido
 		{"cnpj", bureau.Inativo, []string{SinalCNPJInativo}},
 		{"cnpj", bureau.Irregular, []string{SinalCNPJInativo}},
+		{"cnpj", bureau.Inexistente, nil}, // E trata como documento_invalido
+		{"cpf", bureau.Inexistente, nil},
 	}
 	for _, c := range casos {
 		e := entradaLimpa()
@@ -132,6 +135,44 @@ func TestSituacaoDocumento(t *testing.T) {
 		if !slices.Equal(r.Sinais, c.sinais) || !slices.Contains(r.Executadas, "documento") {
 			t.Errorf("%s/%s: sinais %v", c.tipo, c.situacao, r.Sinais)
 		}
+	}
+}
+
+func TestCNPJRecente(t *testing.T) {
+	ref := time.Date(2026, 11, 7, 23, 30, 0, 0, time.FixedZone("BRT", -3*3600))
+	dias := func(n int) string { return ref.AddDate(0, 0, -n).Format(time.DateOnly) }
+	casos := []struct {
+		nome, tipo, abertura string
+		situacao             bureau.Situacao
+		sinais               []string
+	}{
+		{"179 dias", "cnpj", dias(179), bureau.Regular, []string{SinalCNPJRecente}},
+		{"180 dias", "cnpj", dias(180), bureau.Regular, nil},
+		{"181 dias", "cnpj", dias(181), bureau.Regular, nil},
+		{"aberto hoje", "cnpj", dias(0), bureau.Regular, []string{SinalCNPJRecente}},
+		{"abertura no futuro", "cnpj", dias(-1), bureau.Regular, []string{SinalCNPJRecente}},
+		{"inativo e recente", "cnpj", dias(10), bureau.Inativo, []string{SinalCNPJInativo, SinalCNPJRecente}},
+		{"sem situação, só abertura", "cnpj", dias(10), "", []string{SinalCNPJRecente}},
+		{"abertura malformada", "cnpj", "07/11/2026", bureau.Regular, nil},
+		{"CPF ignora abertura", "cpf", dias(10), bureau.Regular, nil},
+	}
+	for _, c := range casos {
+		e := entradaLimpa()
+		e.Tipo, e.Bureau.Situacao, e.Bureau.Abertura, e.Referencia = c.tipo, c.situacao, c.abertura, ref
+		r := avaliar(t, e, contadorFake{})
+		if !slices.Equal(r.Sinais, c.sinais) || !slices.Contains(r.Executadas, "documento") {
+			t.Errorf("%s: sinais %v, executadas %v; quer %v", c.nome, r.Sinais, r.Executadas, c.sinais)
+		}
+	}
+	e := entradaLimpa()
+	e.Tipo, e.Bureau.Abertura, e.Referencia = "cnpj", dias(179), ref
+	if r := avaliar(t, e, contadorFake{}); r.Risco != PesoCNPJRecente {
+		t.Errorf("risco %d, quer %d", r.Risco, PesoCNPJRecente)
+	}
+	e.Referencia = time.Time{} // zero usa o relógio real: aberto ontem é recente hoje
+	e.Bureau.Abertura = time.Now().AddDate(0, 0, -1).Format(time.DateOnly)
+	if r := avaliar(t, e, contadorFake{}); !slices.Equal(r.Sinais, []string{SinalCNPJRecente}) {
+		t.Errorf("relógio real: sinais %v", r.Sinais)
 	}
 }
 
