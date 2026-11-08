@@ -12,6 +12,7 @@ services:
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?defina POSTGRES_APP_PASSWORD no .env}
     ports:
       - "127.0.0.1:55432:5432"
+    networks: [interna]
     volumes:
       - motor-credito-pg:/var/lib/postgresql/data
       - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
@@ -34,6 +35,10 @@ services:
       CHAVE_CIFRA_DOC: ${CHAVE_CIFRA_DOC:?defina CHAVE_CIFRA_DOC no .env}
       COOKIE_INSEGURO_DEV: ${COOKIE_INSEGURO_DEV:-}
       SEED_DEMO: ${SEED_DEMO:-}
+      # Só o nginx (IP fixo abaixo) pode informar o IP do cliente por X-Forwarded-For. Quem chama a 58080
+      # direto chega pelo gateway da rede, que não está na lista: o cabeçalho é ignorado.
+      PROXIES_CONFIAVEIS: 10.213.47.10/32
+    networks: [interna]
     ports:
       - "127.0.0.1:58080:8080"
 
@@ -45,8 +50,17 @@ services:
     container_name: motor-credito-web
     depends_on:
       - api
+    networks:
+      interna:
+        ipv4_address: 10.213.47.10
     ports:
       - "127.0.0.1:55173:80"
+
+networks:
+  interna:
+    ipam:
+      config:
+        - subnet: 10.213.47.0/24
 
 volumes:
   motor-credito-pg:

@@ -60,7 +60,7 @@ func rodar() error {
 	srv := &http.Server{
 		Addr: ":" + cfg.Porta,
 		Handler: httpapi.Novo(httpapi.Deps{
-			Pool: pool, Tenants: tenants, Auth: auth,
+			Pool: pool, Tenants: tenants, Auth: auth, ProxiesConfiaveis: cfg.ProxiesConfiaveis,
 			Consultas: consulta.Novo(pool, bureau.NovoSimulado(atrasoBureau), cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

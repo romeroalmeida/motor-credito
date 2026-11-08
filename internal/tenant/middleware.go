@@ -175,7 +175,7 @@ func (s *Servico) timestampValido(v string) bool {
 }
 
 // ipPermitido: lista vazia libera qualquer IP; endereço ilegível é recusado (fail-closed).
-// Usa r.RemoteAddr: atrás de proxy, quem monta o router precisa reescrevê-lo só a partir de proxy confiável.
+// Usa r.RemoteAddr, que httpapi.IPReal já reescreveu quando a conexão veio de proxy confiável.
 func ipPermitido(remoteAddr string, permitidos []netip.Prefix) bool {
 	if len(permitidos) == 0 {
 		return true

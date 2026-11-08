@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -26,6 +27,8 @@ type Deps struct {
 	Tenants   *tenant.Servico
 	Auth      *painelauth.Handlers
 	Consultas *consulta.Servico
+	// ProxiesConfiaveis: de quem o X-Forwarded-For vale (PROXIES_CONFIAVEIS). Vazio = de ninguém.
+	ProxiesConfiaveis []netip.Prefix
 }
 
 type handlers struct{ Deps }
@@ -34,7 +37,7 @@ type handlers struct{ Deps }
 func Novo(d Deps) http.Handler {
 	h := handlers{d}
 	r := chi.NewRouter()
-	r.Use(middleware.Recoverer, cabecalhosSeguranca, limitarCorpo)
+	r.Use(middleware.Recoverer, IPReal(d.ProxiesConfiaveis), cabecalhosSeguranca, limitarCorpo)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { escreverErro(w, http.StatusNotFound, "nao_encontrado") })
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
 		escreverErro(w, http.StatusMethodNotAllowed, "nao_encontrado")
