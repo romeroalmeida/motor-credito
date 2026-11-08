@@ -796,7 +796,7 @@ components:
       type: object
       required: [valor, prazo]
       properties:
-        valor: { type: integer, format: int64, minimum: 1, description: Centavos }
+        valor: { type: integer, format: int64, minimum: 1, maximum: 10000000000000, description: "Centavos (teto 1e13 = R$ 100 bilhões; acima → 400 em pedido.valor)" }
         prazo: { type: integer, minimum: 1, maximum: 420, description: Meses }
 
     DadosOpcionais:
@@ -981,7 +981,7 @@ components:
         cel: { type: string }
         nega: { type: boolean }
         taxa_bps: { type: integer, minimum: 0 }
-        limite_fixo: { type: integer, format: int64, minimum: 0, description: Centavos }
+        limite_fixo: { type: integer, format: int64, minimum: 0, maximum: 10000000000000, description: "Centavos (teto 1e13; acima → 422 na publicação, regra faixas[i])" }
         multiplo_renda_x10: { type: integer, minimum: 0, description: "30 = 3,0× renda" }
 
     Contraproposta:

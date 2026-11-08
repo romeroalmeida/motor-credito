@@ -1,6 +1,10 @@
 package dinheiro
 
-import "testing"
+import (
+	"errors"
+	"math"
+	"testing"
+)
 
 // Referências calculadas à parte em Python (decimal com 80 dígitos, ROUND_HALF_UP).
 func TestParcela(t *testing.T) {
@@ -31,7 +35,7 @@ func TestParcela(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			if got := Parcela(c.valor, c.prazo, c.taxa); got != c.quer {
+			if got, err := Parcela(c.valor, c.prazo, c.taxa); err != nil || got != c.quer {
 				t.Fatalf("Parcela(%d, %d, %d) = %d; quer %d", c.valor, c.prazo, c.taxa, got, c.quer)
 			}
 		})
@@ -39,7 +43,24 @@ func TestParcela(t *testing.T) {
 }
 
 func TestParcelaPrazoLongoNaoEstoura(t *testing.T) {
-	if got := Parcela(100000000, 420, 99); got <= 0 {
+	if got, err := Parcela(100000000, 420, 99); err != nil || got <= 0 {
 		t.Fatalf("parcela de 420 meses = %d", got)
+	}
+}
+
+// Achado 1 da conferência: MaxInt64 em 1x com taxa > 0 dava parcela negativa (q.Int64() sem checar).
+func TestParcelaEstouraDevolveErro(t *testing.T) {
+	casos := []struct {
+		valor       Centavos
+		prazo, taxa int
+	}{{math.MaxInt64, 1, 290}, {9_000_000_000_000_000_000, 1, 290}, {math.MaxInt64, 1, 1}}
+	for _, c := range casos {
+		if got, err := Parcela(c.valor, c.prazo, c.taxa); !errors.Is(err, ErrEstouro) {
+			t.Errorf("Parcela(%d, %d, %d) = %d, %v; quer ErrEstouro", c.valor, c.prazo, c.taxa, got, err)
+		}
+	}
+	// Limite exato: MaxInt64 em 1x sem taxa cabe.
+	if got, err := Parcela(math.MaxInt64, 1, 0); err != nil || got != math.MaxInt64 {
+		t.Fatalf("Parcela(MaxInt64, 1, 0) = %d, %v", got, err)
 	}
 }

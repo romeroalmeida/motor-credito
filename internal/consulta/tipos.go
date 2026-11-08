@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 	"github.com/romeroalmeida/motor-credito/internal/politica"
 )
 
@@ -107,8 +108,8 @@ func (r Requisicao) Validar() map[string]string {
 }
 
 func validarPedido(p Pedido, campos map[string]string) {
-	if p.Valor < 1 {
-		campos["pedido.valor"] = "deve ser maior que zero (centavos)"
+	if p.Valor < 1 || p.Valor > dinheiro.ValorMaximo {
+		campos["pedido.valor"] = "entre 1 e 10000000000000 centavos"
 	}
 	if p.Prazo < 1 || p.Prazo > prazoMaximo {
 		campos["pedido.prazo"] = "entre 1 e 420 meses"

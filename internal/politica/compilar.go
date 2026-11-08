@@ -11,6 +11,8 @@ import (
 	"cel.dev/cel-go/common"
 	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/cost"
+
+	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 )
 
 // Limites de cada expressão. Valem na publicação (estimativa estática) e na avaliação (CostLimit).
@@ -165,6 +167,8 @@ func validarFaixa(f Faixa) error {
 		return errors.New("taxa, limite e múltiplo não podem ser negativos")
 	case f.LimiteFixo == 0:
 		return errors.New("faixa que aprova precisa de limite fixo maior que zero")
+	case f.LimiteFixo > dinheiro.ValorMaximo:
+		return fmt.Errorf("limite fixo acima de %d centavos", dinheiro.ValorMaximo)
 	case f.MultiploRenda > maxMultiploRenda:
 		return fmt.Errorf("múltiplo de renda acima de %d", maxMultiploRenda)
 	}

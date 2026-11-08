@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -178,7 +179,7 @@ func TestLimiteEContraproposta(t *testing.T) {
 				return
 			}
 			want := *tc.oferta
-			want.Parcela = dinheiro.Parcela(want.Valor, want.Prazo, want.TaxaBps)
+			want.Parcela, _ = dinheiro.Parcela(want.Valor, want.Prazo, want.TaxaBps)
 			if d.Oferta == nil || *d.Oferta != want {
 				t.Fatalf("oferta %+v, want %+v", d.Oferta, want)
 			}
@@ -284,6 +285,8 @@ func TestCompilar_Recusa(t *testing.T) {
 	semRotulo.Faixas[1].Rotulo = ""
 	negativo := ModeloEmprestimoPF()
 	negativo.Contraproposta.PrazoMaximo = -1
+	limiteAcima := ModeloEmprestimoPF()
+	limiteAcima.Faixas[1].LimiteFixo = dinheiro.ValorMaximo + 1
 
 	casos := []struct {
 		nome   string
@@ -301,6 +304,7 @@ func TestCompilar_Recusa(t *testing.T) {
 		{"faixa sem limite", semLimite, "faixas[1]", "limite fixo"},
 		{"faixa sem rótulo", semRotulo, "faixas[1]", "sem rótulo"},
 		{"contraproposta negativa", negativo, "contraproposta", "negativos"},
+		{"limite fixo acima do teto", limiteAcima, "faixas[1]", "limite fixo acima"},
 		{"renda sem has", avancada("renda > 100"), "cortes[0]", "renda usada sem has(renda)"},
 		{"idade sem has", avancada("idade < 18"), "cortes[0]", "idade usada sem has(idade)"},
 		{"has depois do uso", avancada("idade < 18 && has(idade)"), "cortes[0]", "sem has(idade)"},
@@ -397,6 +401,21 @@ func TestAvaliar_PedidoInvalido(t *testing.T) {
 		if _, err := c.Avaliar(ctx); err == nil {
 			t.Fatalf("aceitou %+v", ctx)
 		}
+	}
+}
+
+// Achado 1: o teto de limite_fixo barra na publicação; se ainda assim a parcela não couber em int64
+// (política montada sem Compilar), Avaliar devolve erro em vez de oferta com parcela negativa.
+func TestLimiteFixoNoTeto(t *testing.T) {
+	p := Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: 290, LimiteFixo: dinheiro.ValorMaximo}}}
+	d := avaliar(t, compilar(t, p), Contexto{PedidoValor: dinheiro.ValorMaximo, PedidoPrazo: 1})
+	if d.Status != Aprovado || d.Oferta == nil || d.Oferta.Parcela <= 0 {
+		t.Fatalf("no teto: %+v", d)
+	}
+	c := compilar(t, p)
+	c.politica.Faixas[0].LimiteFixo = math.MaxInt64
+	if d, err := c.Avaliar(Contexto{PedidoValor: 9_000_000_000_000_000_000, PedidoPrazo: 1}); err == nil {
+		t.Fatalf("parcela estourada virou decisão: %+v", d)
 	}
 }
 

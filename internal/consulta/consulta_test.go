@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
+	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 	"github.com/romeroalmeida/motor-credito/internal/politica"
 )
 
@@ -138,6 +139,12 @@ func TestValidar(t *testing.T) {
 		if _, ok := campos[c]; !ok {
 			t.Errorf("faltou erro em %s (%v)", c, campos)
 		}
+	}
+	if _, ok := req(bureau.CPFScoreAlto, dinheiro.ValorMaximo+1).Validar()["pedido.valor"]; !ok {
+		t.Error("pedido.valor acima do teto aceito")
+	}
+	if campos := req(bureau.CPFScoreAlto, dinheiro.ValorMaximo).Validar(); len(campos) != 0 {
+		t.Errorf("pedido no teto recusado: %v", campos)
 	}
 	if campos := req(bureau.CPFScoreAlto, 1).Validar(); len(campos) != 0 {
 		t.Errorf("requisição válida recusada: %v", campos)
