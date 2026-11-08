@@ -1,0 +1,1059 @@
+openapi: 3.1.0
+info:
+  title: Motor de Crédito
+  version: 0.1.0
+  description: |
+    Contrato da API pública (`/v1`) e da API do painel (`/painel`).
+
+    Convenções:
+    - Dinheiro sempre em **centavos** (inteiro). Taxa em **pontos-base** ao mês (290 = 2,90% a.m.).
+    - IDs com prefixo: `cons_`, `pol_`, `usr_`, `cvt_`, `ten_` + ULID. Chave de API: `ck_live_<id>_<segredo>`.
+    - Datas em RFC 3339 (UTC). Datas sem hora em `AAAA-MM-DD`.
+    - Erros sempre no formato `Erro`. Na autenticação a API nunca diz qual parte falhou.
+
+    Painel: sessão no cookie `sessao` (httpOnly, Secure, SameSite=Strict). Todo método que escreve
+    (POST/PUT/DELETE) exige o cabeçalho `X-CSRF` igual ao cookie `csrf` (legível pelo JS, double submit).
+    O tenant vem sempre da sessão. Recurso de outro tenant responde 404.
+servers:
+  - url: http://localhost:8080
+
+tags:
+  - name: consultas-api
+    description: API pública para clientes (chave de API + HMAC)
+  - name: auth
+  - name: chaves
+  - name: equipe
+  - name: consultas
+  - name: politica
+  - name: visao-geral
+  - name: saude
+
+paths:
+  /saude:
+    get:
+      tags: [saude]
+      summary: Verificação de vida
+      security: []
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+
+  # ------------------------------------------------------------------ API pública
+  /v1/consultas:
+    post:
+      tags: [consultas-api]
+      summary: Pede uma decisão de crédito
+      description: |
+        Síncrona. Bureau indisponível vira decisão `negado` com motivo `BUREAU_INDISPONIVEL`, nunca erro.
+        Documento com dígito inválido ou de pessoa falecida vira `documento_invalido` (200).
+
+        Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + corpo bruto)).
+        `X-Timestamp` em segundos Unix; fora de ±5 min é recusado.
+      security:
+        - chaveApi: []
+      parameters:
+        - $ref: "#/components/parameters/XTimestamp"
+        - $ref: "#/components/parameters/XAssinatura"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConsultaRequisicao" }
+            example:
+              documento: "123.456.789-09"
+              finalidade: concessao_credito
+              pedido: { valor: 1000000, prazo: 24 }
+              dados: { nome: "Maria da Silva", nascimento: "1990-05-01", renda: 500000, email: "maria@exemplo.com.br", ip: "200.150.10.1", device_id: "d-123" }
+      responses:
+        "200":
+          description: Decisão (inclusive negado e documento_invalido)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsultaResposta" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "409":
+          description: Mesma Idempotency-Key com corpo diferente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Erro" }
+              example: { erro: conflito_idempotencia }
+        "413": { $ref: "#/components/responses/CorpoGrande" }
+        "429": { $ref: "#/components/responses/Limite" }
+
+  # ------------------------------------------------------------------ Painel: autenticação
+  /painel/auth/entrar:
+    post:
+      tags: [auth]
+      summary: Primeiro passo do login (e-mail + senha)
+      description: |
+        Em sucesso cria sessão **pendente de 2FA** (cookies `sessao` e `csrf`) e responde `{"proximo":"2fa"}`.
+        Sem CSRF (ainda não há sessão). Limite por e-mail+IP: 429.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, senha]
+              properties:
+                email: { type: string, format: email }
+                senha: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Senha ok; falta o TOTP
+          headers:
+            Set-Cookie: { schema: { type: string }, description: "sessao (httpOnly) e csrf" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProximoPasso" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "429": { $ref: "#/components/responses/Limite" }
+
+  /painel/auth/2fa:
+    post:
+      tags: [auth]
+      summary: Segundo passo (código TOTP de 6 dígitos)
+      description: Conclui o login ou o cadastro por convite. Gira o cookie de sessão.
+      security: [{ sessaoPendente: [] }]
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codigo]
+              properties:
+                codigo: { type: string, pattern: "^[0-9]{6}$" }
+      responses:
+        "200":
+          description: Sessão completa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Eu" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/CSRF" }
+        "429": { $ref: "#/components/responses/Limite" }
+
+  /painel/auth/cadastro:
+    post:
+      tags: [auth]
+      summary: Aceita um convite (cria usuário e inicia o cadastro do TOTP)
+      description: |
+        O link do convite é `/cadastro?token=<token>`. Cria o usuário, a associação com o papel do convite e uma
+        sessão pendente; devolve o segredo TOTP para o app autenticador. O cadastro termina em `/painel/auth/2fa`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, nome, senha]
+              properties:
+                token: { type: string }
+                nome: { type: string, minLength: 1, maxLength: 120 }
+                senha: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "200":
+          description: Usuário criado; falta confirmar o TOTP
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proximo, otpauth_url, segredo_totp]
+                properties:
+                  proximo: { type: string, const: 2fa }
+                  otpauth_url: { type: string, description: "otpauth://totp/... para gerar o QR code" }
+                  segredo_totp: { type: string, description: "Base32, para digitar à mão" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /painel/auth/sair:
+    post:
+      tags: [auth]
+      summary: Encerra a sessão
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      responses:
+        "204": { description: Sessão encerrada e cookies apagados }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/CSRF" }
+
+  /painel/auth/eu:
+    get:
+      tags: [auth]
+      summary: Usuário e tenant da sessão
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Eu" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+
+  # ------------------------------------------------------------------ Painel: chaves (admin)
+  /painel/chaves:
+    get:
+      tags: [chaves]
+      summary: Lista as chaves de API (sem segredo)
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/Chave" } }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+    post:
+      tags: [chaves]
+      summary: Cria uma chave (o segredo aparece só nesta resposta)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome: { type: string, maxLength: 80 }
+      responses:
+        "201":
+          description: Criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaveCriada" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/chaves/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [chaves]
+      summary: Revoga a chave (irreversível)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      responses:
+        "204": { description: Revogada }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /painel/chaves/{id}/girar:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [chaves]
+      summary: Gira a chave (cria uma nova com o mesmo nome e revoga esta)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      responses:
+        "201":
+          description: Nova chave
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaveCriada" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /painel/chaves/ips:
+    get:
+      tags: [chaves]
+      summary: IPs permitidos para a API do tenant (vazio = qualquer IP)
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IPsPermitidos" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+    put:
+      tags: [chaves]
+      summary: Troca a lista de IPs permitidos
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IPsPermitidos" }
+      responses:
+        "200":
+          description: Salva
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IPsPermitidos" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  # ------------------------------------------------------------------ Painel: equipe (admin)
+  /painel/equipe:
+    get:
+      tags: [equipe]
+      summary: Membros e convites pendentes
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [membros, convites]
+                properties:
+                  membros: { type: array, items: { $ref: "#/components/schemas/Membro" } }
+                  convites: { type: array, items: { $ref: "#/components/schemas/Convite" } }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+    post:
+      tags: [equipe]
+      summary: Convida alguém (gera link de cadastro com TOTP)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, papel]
+              properties:
+                email: { type: string, format: email }
+                papel: { $ref: "#/components/schemas/Papel" }
+      responses:
+        "201":
+          description: Convite criado; o link aparece só aqui
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Convite"
+                  - type: object
+                    required: [link]
+                    properties:
+                      link: { type: string, description: "URL de cadastro com o token (válida por 7 dias)" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "409":
+          description: E-mail já é membro ou tem convite pendente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Erro" }
+
+  # ------------------------------------------------------------------ Painel: consultas (admin, analista)
+  /painel/consultas:
+    get:
+      tags: [consultas]
+      summary: Lista consultas do tenant (mais recentes primeiro)
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/StatusDecisao" } }
+        - { name: faixa, in: query, schema: { type: string }, description: Rótulo da faixa de risco }
+        - { name: documento, in: query, schema: { type: string }, description: "CPF/CNPJ completo (busca por HMAC; nunca parcial)" }
+        - { name: desde, in: query, schema: { type: string, format: date } }
+        - { name: ate, in: query, schema: { type: string, format: date } }
+        - { name: cursor, in: query, schema: { type: string }, description: "Valor de proximo_cursor da página anterior" }
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens, proximo_cursor]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/ConsultaResumo" } }
+                  proximo_cursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/consultas/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [consultas]
+      summary: Detalhe com a trilha de regras e a versão da política
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsultaDetalhe" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  # ------------------------------------------------------------------ Painel: política (admin; leitura também analista)
+  /painel/politicas:
+    get:
+      tags: [politica]
+      summary: Política do tenant (rascunho + versão publicada)
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PoliticaEstado" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/politicas/rascunho:
+    put:
+      tags: [politica]
+      summary: Salva o rascunho (não valida CEL a fundo; isso é na publicação e no teste)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Politica" }
+      responses:
+        "200":
+          description: Salvo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PoliticaEstado" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/politicas/testar:
+    post:
+      tags: [politica]
+      summary: Roda o rascunho contra um documento de exemplo (não grava consulta)
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documento, pedido]
+              properties:
+                documento: { type: string }
+                pedido: { $ref: "#/components/schemas/Pedido" }
+                dados: { $ref: "#/components/schemas/DadosOpcionais" }
+                politica:
+                  $ref: "#/components/schemas/Politica"
+                  description: Se ausente, usa o rascunho salvo
+      responses:
+        "200":
+          description: Decisão simulada com trilha
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoTeste" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "422": { $ref: "#/components/responses/PoliticaInvalida" }
+
+  /painel/politicas/publicar:
+    post:
+      tags: [politica]
+      summary: Publica o rascunho como versão N+1 (imutável)
+      description: Exige `confirmacao` = true. Compila todo o CEL; recusa com 422 listando regra e motivo.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmacao]
+              properties:
+                confirmacao: { type: boolean, const: true }
+                comentario: { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Publicada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PoliticaVersao" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "422": { $ref: "#/components/responses/PoliticaInvalida" }
+
+  /painel/politicas/versoes:
+    get:
+      tags: [politica]
+      summary: Histórico de versões (mais nova primeiro, sem o conteúdo)
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/PoliticaVersaoResumo" } }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/politicas/versoes/{versao}:
+    parameters:
+      - { name: versao, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [politica]
+      summary: Uma versão com o conteúdo
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PoliticaVersao" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /painel/politicas/versoes/{versao}/reverter:
+    parameters:
+      - { name: versao, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      tags: [politica]
+      summary: Publica uma cópia desta versão como versão nova
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmacao]
+              properties:
+                confirmacao: { type: boolean, const: true }
+      responses:
+        "201":
+          description: Nova versão (revertida_de = versao)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PoliticaVersao" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  /painel/politicas/diferenca:
+    get:
+      tags: [politica]
+      summary: Diferença entre duas versões (ou versão × rascunho)
+      parameters:
+        - { name: de, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: para, in: query, required: true, schema: { type: string }, description: 'Número da versão ou "rascunho"' }
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [de, para, mudancas]
+                properties:
+                  de: { type: integer }
+                  para: { type: string }
+                  mudancas: { type: array, items: { $ref: "#/components/schemas/Mudanca" } }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
+  # ------------------------------------------------------------------ Painel: visão geral
+  /painel/visao-geral:
+    get:
+      tags: [visao-geral]
+      summary: Números do período
+      parameters:
+        - { name: periodo, in: query, schema: { type: string, enum: [hoje, "7d", "30d"], default: hoje } }
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisaoGeral" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+components:
+  securitySchemes:
+    chaveApi:
+      type: http
+      scheme: bearer
+      description: "Authorization: Bearer ck_live_<id>_<segredo> (mais X-Timestamp e X-Assinatura)"
+    sessao:
+      type: apiKey
+      in: cookie
+      name: sessao
+    sessaoPendente:
+      type: apiKey
+      in: cookie
+      name: sessao
+      description: Sessão criada pelo passo da senha (ou pelo cadastro), ainda sem TOTP
+
+  parameters:
+    XTimestamp:
+      { name: X-Timestamp, in: header, required: true, schema: { type: string, pattern: "^[0-9]+$" }, description: Segundos Unix }
+    XAssinatura:
+      { name: X-Assinatura, in: header, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
+    IdempotencyKey:
+      { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+    XCSRF:
+      { name: X-CSRF, in: header, required: true, schema: { type: string }, description: Igual ao cookie csrf }
+
+  responses:
+    CorpoInvalido:
+      description: Corpo ou parâmetro inválido
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: corpo_invalido, campos: { "pedido.prazo": "deve ser maior que zero" } }
+    CorpoGrande:
+      description: Corpo acima de 64 KB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: corpo_grande }
+    NaoAutorizado:
+      description: Sem credencial válida (não diz qual parte falhou)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: nao_autorizado }
+    CSRF:
+      description: X-CSRF ausente ou diferente do cookie
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: csrf_invalido }
+    Proibido:
+      description: Papel sem permissão (ou CSRF inválido)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: proibido }
+    NaoEncontrado:
+      description: Não existe ou é de outro tenant
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: nao_encontrado }
+    Limite:
+      description: Limite de requisições
+      headers:
+        Retry-After: { schema: { type: integer }, description: Segundos }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: limite_excedido }
+    PoliticaInvalida:
+      description: Política não compila
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example:
+            erro: politica_invalida
+            detalhes: [{ regra: "faixas[1]", motivo: "renda usada sem has(renda)" }]
+
+  schemas:
+    Erro:
+      type: object
+      required: [erro]
+      properties:
+        erro:
+          type: string
+          description: Código estável
+          enum: [corpo_invalido, corpo_grande, nao_autorizado, csrf_invalido, proibido, nao_encontrado,
+                 conflito_idempotencia, conflito, limite_excedido, politica_invalida, erro_interno]
+        mensagem: { type: string, description: Texto para pessoas (pt-BR) }
+        campos:
+          type: object
+          additionalProperties: { type: string }
+          description: Campo → problema (400)
+        detalhes:
+          type: array
+          description: Regras que não compilaram (422)
+          items:
+            type: object
+            required: [regra, motivo]
+            properties:
+              regra: { type: string, description: 'Ex.: "cortes[0]", "faixas[2].condicoes[1]"' }
+              motivo: { type: string }
+
+    StatusDecisao:
+      type: string
+      enum: [aprovado, negado, contraproposta, documento_invalido, em_analise]
+      description: em_analise é reservado para a v2
+
+    Papel:
+      type: string
+      enum: [admin, analista, auditor]
+
+    Pedido:
+      type: object
+      required: [valor, prazo]
+      properties:
+        valor: { type: integer, format: int64, minimum: 1, description: Centavos }
+        prazo: { type: integer, minimum: 1, maximum: 420, description: Meses }
+
+    DadosOpcionais:
+      type: object
+      description: Cada dado enviado liga mais checagens antifraude
+      properties:
+        nome: { type: string, maxLength: 200 }
+        nascimento: { type: string, format: date }
+        renda: { type: integer, format: int64, minimum: 0, description: Centavos/mês }
+        email: { type: string, format: email }
+        telefone: { type: string, maxLength: 30 }
+        ip: { type: string, description: IPv4 ou IPv6 do solicitante }
+        device_id: { type: string, maxLength: 200 }
+
+    ConsultaRequisicao:
+      type: object
+      required: [documento, finalidade, pedido]
+      properties:
+        documento: { type: string, description: "CPF ou CNPJ (com ou sem máscara; CNPJ alfanumérico aceito)" }
+        finalidade: { type: string, enum: [concessao_credito] }
+        pedido: { $ref: "#/components/schemas/Pedido" }
+        dados: { $ref: "#/components/schemas/DadosOpcionais" }
+
+    Oferta:
+      type: object
+      required: [valor, prazo, taxa_mensal_bps, parcela]
+      properties:
+        valor: { type: integer, format: int64, description: Centavos }
+        prazo: { type: integer }
+        taxa_mensal_bps: { type: integer }
+        parcela: { type: integer, format: int64, description: Centavos (Price) }
+
+    Motivo:
+      type: object
+      required: [codigo, texto]
+      properties:
+        codigo: { type: string, examples: [LIMITE_FAIXA, SEM_FAIXA, BUREAU_INDISPONIVEL, DOCUMENTO_INVALIDO] }
+        texto: { type: string }
+
+    Antifraude:
+      type: object
+      required: [risco, sinais, checagens_executadas, checagens_puladas]
+      properties:
+        risco: { type: integer, minimum: 0, maximum: 100 }
+        sinais:
+          type: array
+          items:
+            type: string
+            enum: [cpf_irregular, cnpj_inativo, velocidade_alta, nome_divergente, nascimento_divergente,
+                   email_descartavel, ip_estrangeiro, ip_datacenter, dispositivo_multiplos_cpfs]
+        checagens_executadas: { type: array, items: { $ref: "#/components/schemas/Checagem" } }
+        checagens_puladas: { type: array, items: { $ref: "#/components/schemas/Checagem" } }
+
+    Checagem:
+      type: string
+      enum: [documento, velocidade, nome, nascimento, email, ip, dispositivo]
+
+    PoliticaRef:
+      type: object
+      required: [id, versao]
+      properties:
+        id: { type: string }
+        versao: { type: integer }
+
+    ConsultaResposta:
+      type: object
+      required: [id, status, pedido, motivos, criado_em]
+      properties:
+        id: { type: string, examples: [cons_01JC0000000000000000000000] }
+        status: { $ref: "#/components/schemas/StatusDecisao" }
+        score: { type: [integer, "null"], minimum: 0, maximum: 1000 }
+        faixa_risco: { type: [string, "null"] }
+        oferta:
+          oneOf:
+            - $ref: "#/components/schemas/Oferta"
+            - type: "null"
+        pedido: { $ref: "#/components/schemas/Pedido" }
+        motivos: { type: array, items: { $ref: "#/components/schemas/Motivo" } }
+        antifraude:
+          oneOf:
+            - $ref: "#/components/schemas/Antifraude"
+            - type: "null"
+        politica:
+          oneOf:
+            - $ref: "#/components/schemas/PoliticaRef"
+            - type: "null"
+        criado_em: { type: string, format: date-time }
+
+    RegraAvaliada:
+      type: object
+      required: [bloco, rotulo, expressao, bateu]
+      properties:
+        bloco: { type: string, enum: [corte, faixa, contraproposta] }
+        rotulo: { type: string, description: Código do corte ou rótulo da faixa }
+        expressao: { type: string, description: CEL efetivamente avaliado }
+        bateu: { type: boolean }
+
+    ConsultaResumo:
+      type: object
+      required: [id, documento_mascarado, status, pedido, criado_em]
+      properties:
+        id: { type: string }
+        documento_mascarado: { type: string, examples: ["***.456.789-**"] }
+        tipo_documento: { type: string, enum: [cpf, cnpj] }
+        status: { $ref: "#/components/schemas/StatusDecisao" }
+        score: { type: [integer, "null"] }
+        faixa_risco: { type: [string, "null"] }
+        pedido: { $ref: "#/components/schemas/Pedido" }
+        oferta:
+          oneOf:
+            - $ref: "#/components/schemas/Oferta"
+            - type: "null"
+        antifraude_risco: { type: [integer, "null"] }
+        politica_versao: { type: [integer, "null"] }
+        criado_em: { type: string, format: date-time }
+
+    ConsultaDetalhe:
+      allOf:
+        - $ref: "#/components/schemas/ConsultaResposta"
+        - type: object
+          required: [documento_mascarado, trilha, dados_informados, finalidade, base_legal]
+          properties:
+            documento_mascarado: { type: string }
+            tipo_documento: { type: string, enum: [cpf, cnpj] }
+            finalidade: { type: string }
+            base_legal: { type: string }
+            dados_informados:
+              type: array
+              description: Quais dados opcionais vieram (sem os valores)
+              items: { type: string, enum: [nome, nascimento, renda, email, telefone, ip, device_id] }
+            trilha: { type: array, items: { $ref: "#/components/schemas/RegraAvaliada" } }
+
+    # --- Política (o JSON que o painel edita; espelha internal/politica)
+    Condicao:
+      type: object
+      required: [campo, operador, valor]
+      properties:
+        campo:
+          type: string
+          enum: [score, bureau.restricoes, bureau.protestos, bureau.divida_total, renda, idade,
+                 pedido.valor, pedido.prazo, fraude.risco, fraude.sinais]
+        operador: { type: string, enum: ["==", "!=", "<", "<=", ">", ">=", in] }
+        valor:
+          description: Número (centavos para dinheiro), texto, ou lista (com `in`)
+          oneOf:
+            - type: integer
+            - type: string
+            - type: array
+              items: { oneOf: [{ type: integer }, { type: string }] }
+
+    Corte:
+      type: object
+      required: [codigo, texto]
+      properties:
+        codigo: { type: string, examples: [FRAUDE_ALTA] }
+        texto: { type: string }
+        condicoes: { type: array, items: { $ref: "#/components/schemas/Condicao" }, description: E entre condições }
+        cel: { type: string, description: Usado quando expressao_avancada = true }
+
+    Faixa:
+      type: object
+      required: [rotulo, nega, taxa_bps, limite_fixo, multiplo_renda_x10]
+      properties:
+        rotulo: { type: string, examples: [A, B, C] }
+        condicoes: { type: array, items: { $ref: "#/components/schemas/Condicao" } }
+        cel: { type: string }
+        nega: { type: boolean }
+        taxa_bps: { type: integer, minimum: 0 }
+        limite_fixo: { type: integer, format: int64, minimum: 0, description: Centavos }
+        multiplo_renda_x10: { type: integer, minimum: 0, description: "30 = 3,0× renda" }
+
+    Contraproposta:
+      type: object
+      required: [ativa, prazo_maximo, acrescimo_taxa_bps]
+      properties:
+        ativa: { type: boolean }
+        prazo_maximo: { type: integer, minimum: 0, description: 0 = mantém o prazo pedido }
+        acrescimo_taxa_bps: { type: integer, minimum: 0 }
+
+    Politica:
+      type: object
+      required: [cortes, faixas, contraproposta, expressao_avancada]
+      properties:
+        cortes: { type: array, items: { $ref: "#/components/schemas/Corte" } }
+        faixas: { type: array, minItems: 1, items: { $ref: "#/components/schemas/Faixa" } }
+        contraproposta: { $ref: "#/components/schemas/Contraproposta" }
+        expressao_avancada: { type: boolean }
+
+    PoliticaEstado:
+      type: object
+      required: [id, nome, rascunho, rascunho_atualizado_em, versao_publicada]
+      properties:
+        id: { type: string }
+        nome: { type: string }
+        rascunho: { $ref: "#/components/schemas/Politica" }
+        rascunho_atualizado_em: { type: string, format: date-time }
+        rascunho_atualizado_por: { type: [string, "null"], description: Nome do usuário }
+        versao_publicada: { type: [integer, "null"] }
+        rascunho_difere_da_publicada: { type: boolean }
+
+    PoliticaVersaoResumo:
+      type: object
+      required: [versao, publicada_por, publicada_em]
+      properties:
+        versao: { type: integer }
+        publicada_por: { type: string, description: Nome do usuário }
+        publicada_em: { type: string, format: date-time }
+        revertida_de: { type: [integer, "null"] }
+        comentario: { type: string }
+
+    PoliticaVersao:
+      allOf:
+        - $ref: "#/components/schemas/PoliticaVersaoResumo"
+        - type: object
+          required: [conteudo]
+          properties:
+            conteudo: { $ref: "#/components/schemas/Politica" }
+
+    Mudanca:
+      type: object
+      required: [caminho, tipo]
+      properties:
+        caminho: { type: string, examples: ["faixas[1].taxa_bps"] }
+        tipo: { type: string, enum: [adicionado, removido, alterado] }
+        antes: { description: Valor anterior (qualquer JSON) }
+        depois: { description: Valor novo (qualquer JSON) }
+
+    ResultadoTeste:
+      type: object
+      required: [status, motivos, trilha]
+      properties:
+        status: { $ref: "#/components/schemas/StatusDecisao" }
+        score: { type: [integer, "null"] }
+        faixa_risco: { type: [string, "null"] }
+        oferta:
+          oneOf:
+            - $ref: "#/components/schemas/Oferta"
+            - type: "null"
+        motivos: { type: array, items: { $ref: "#/components/schemas/Motivo" } }
+        antifraude:
+          oneOf:
+            - $ref: "#/components/schemas/Antifraude"
+            - type: "null"
+        trilha: { type: array, items: { $ref: "#/components/schemas/RegraAvaliada" } }
+
+    # --- Sessão, chaves e equipe
+    ProximoPasso:
+      type: object
+      required: [proximo]
+      properties:
+        proximo: { type: string, enum: ["2fa"] }
+
+    Eu:
+      type: object
+      required: [usuario, tenant, papel]
+      properties:
+        usuario:
+          type: object
+          required: [id, nome, email]
+          properties:
+            id: { type: string }
+            nome: { type: string }
+            email: { type: string }
+        tenant:
+          type: object
+          required: [id, nome]
+          properties:
+            id: { type: string }
+            nome: { type: string }
+        papel: { $ref: "#/components/schemas/Papel" }
+
+    Chave:
+      type: object
+      required: [id, nome, prefixo, criada_em, revogada_em, ultimo_uso_em]
+      properties:
+        id: { type: string }
+        nome: { type: string }
+        prefixo: { type: string, description: '"ck_live_<id>_…" (sem o segredo)' }
+        criada_em: { type: string, format: date-time }
+        revogada_em: { type: [string, "null"], format: date-time }
+        ultimo_uso_em: { type: [string, "null"], format: date-time }
+
+    ChaveCriada:
+      type: object
+      required: [id, segredo]
+      properties:
+        id: { type: string }
+        segredo: { type: string, description: 'Completo: "ck_live_<id>_<segredo>". Mostrado uma única vez.' }
+
+    IPsPermitidos:
+      type: object
+      required: [ips]
+      properties:
+        ips:
+          type: array
+          maxItems: 50
+          items: { type: string, description: 'IP ou CIDR, ex.: "200.150.10.0/24"' }
+
+    Membro:
+      type: object
+      required: [usuario_id, nome, email, papel, desde]
+      properties:
+        usuario_id: { type: string }
+        nome: { type: string }
+        email: { type: string }
+        papel: { $ref: "#/components/schemas/Papel" }
+        desde: { type: string, format: date-time }
+
+    Convite:
+      type: object
+      required: [id, email, papel, criado_em, expira_em]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        papel: { $ref: "#/components/schemas/Papel" }
+        criado_em: { type: string, format: date-time }
+        expira_em: { type: string, format: date-time }
+
+    VisaoGeral:
+      type: object
+      required: [periodo, total, por_status, taxa_aprovacao_bps, distribuicao_score, sinais_frequentes]
+      properties:
+        periodo: { type: string, enum: [hoje, "7d", "30d"] }
+        total: { type: integer }
+        por_status:
+          type: object
+          additionalProperties: { type: integer }
+          description: StatusDecisao → quantidade
+        taxa_aprovacao_bps:
+          type: integer
+          description: (aprovado + contraproposta) / total, em pontos-base (6500 = 65%)
+        distribuicao_score:
+          type: array
+          items:
+            type: object
+            required: [de, ate, quantidade]
+            properties:
+              de: { type: integer }
+              ate: { type: integer }
+              quantidade: { type: integer }
+        sinais_frequentes:
+          type: array
+          items:
+            type: object
+            required: [sinal, quantidade]
+            properties:
+              sinal: { type: string }
+              quantidade: { type: integer }
+
+security:
+  - sessao: []
