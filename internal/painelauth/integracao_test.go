@@ -63,6 +63,8 @@ func TestIntegracao(t *testing.T) {
 	t.Run("sair", a.testarSair)
 	t.Run("equipe: remover e trocar papel", a.testarRemoverETrocarPapel)
 	t.Run("auditoria de chaves, equipe e auth", a.testarAuditoriaDeAcesso) // depois de todos: conta o que eles fizeram
+	t.Run("equipe: filtro de tenant sem RLS", a.testarEquipeSemRLS)
+	t.Run("equipe: admins simultâneos não zeram o tenant", a.testarUltimoAdminConcorrente)
 }
 
 func (a *ambiente) exec(sql string, args ...any) {
@@ -532,6 +534,132 @@ func (a *ambiente) testarRemoverETrocarPapel(t *testing.T) {
 	quer(t, admin.fazer("DELETE", "/painel/equipe/"+euAdmin, ``, true), 409, "ultimo_admin")
 	quer(t, admin.fazer("PATCH", "/painel/equipe/"+euAdmin, `{"papel":"admin"}`, true), 200, "") // admin → admin não tira ninguém
 	quer(t, admin.fazer("GET", "/painel/auth/eu", "", false), 200, "")
+}
+
+// Com o pool dono (sem RLS), só o "AND tenant_id" explícito das queries da equipe separa os tenants. X é membro
+// de D e de E; Y só de E. O admin de D não alcança Y, e mexer em X dentro de D não toca a associação nem a sessão
+// de X em E.
+func (a *ambiente) testarEquipeSemRLS(t *testing.T) {
+	ctx := context.Background()
+	d := &ambiente{t: t, b: a.b, relogio: a.relogio}
+	h := Novo(a.b.Dono, tenant.NovoServico(a.b.Dono, chaveCifraTeste), Opcoes{ChaveCifra: chaveCifraTeste})
+	h.agora = func() time.Time { return d.relogio }
+	r := chi.NewRouter()
+	h.Rotas(r)
+	d.rotas = r
+	a.exec(`INSERT INTO tenants (id, nome) VALUES ('ten_d', 'ten_d'), ('ten_e', 'ten_e')`)
+	admin := d.entrar(t, d.semear(t, "ten_d", "admin.d@exemplo.com", PapelAdmin))
+	x := d.semear(t, "ten_d", "x.de@exemplo.com", PapelAnalista)
+	a.exec(`INSERT INTO associacoes (usuario_id, tenant_id, papel) VALUES ($1, 'ten_e', 'analista')`, x.id)
+	a.exec(`INSERT INTO sessoes (id, token_hash, csrf_hash, usuario_id, tenant_id, dois_fatores_em, expira_em)
+		VALUES ('ses_x_em_e', '\x0e', '\x0e', $1, 'ten_e', now(), now() + interval '1 hour')`, x.id)
+	y := d.semear(t, "ten_e", "y.e@exemplo.com", PapelAnalista)
+
+	papelEmE := func(usuarioID string) string {
+		t.Helper()
+		var p string
+		if err := a.b.Dono.QueryRow(ctx, `SELECT papel FROM associacoes WHERE usuario_id = $1 AND tenant_id = 'ten_e'`,
+			usuarioID).Scan(&p); err != nil {
+			t.Fatalf("associação de %s em ten_e sumiu: %v", usuarioID, err)
+		}
+		return p
+	}
+
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+y.id, ``, true), 404, "nao_encontrado")
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+y.id, `{"papel":"auditor"}`, true), 404, "nao_encontrado")
+	if p := papelEmE(y.id); p != "analista" {
+		t.Fatalf("admin de D mudou Y em E: %q", p)
+	}
+
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+x.id, `{"papel":"auditor"}`, true), 200, "")
+	if p := papelEmE(x.id); p != "analista" {
+		t.Fatalf("PATCH em D rebaixou/promoveu X em E: %q", p)
+	}
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+x.id, ``, true), 204, "")
+	papelEmE(x.id)
+	var encerrada *time.Time
+	if err := a.b.Dono.QueryRow(ctx, `SELECT encerrada_em FROM sessoes WHERE id = 'ses_x_em_e'`).Scan(&encerrada); err != nil || encerrada != nil {
+		t.Fatalf("remover X de D encerrou a sessão dele em E: %v %v", encerrada, err)
+	}
+}
+
+// Duas operações simultâneas que tiram admins diferentes de um tenant com dois admins: uma tem de esperar a outra
+// e receber 409. A transação 1 (os mesmos passos do handler: travarMembro e a escrita) fica aberta segurando as
+// travas; a 2 é o handler de verdade. O teste só fecha a 1 depois que a 2 terminou ou está parada esperando trava
+// (pg_stat_activity), então o resultado não depende de sorte: sem o FOR UPDATE a 2 passa e o tenant fica sem admin.
+func (a *ambiente) testarUltimoAdminConcorrente(t *testing.T) {
+	ctx := context.Background()
+	casos := []struct {
+		nome, sqlTx1, metodo, corpo string
+		statusOk                    int
+	}{
+		{"remoções", `DELETE FROM associacoes WHERE usuario_id = $1 AND tenant_id = $2`, "DELETE", ``, 204},
+		{"rebaixamentos", `UPDATE associacoes SET papel = 'analista' WHERE usuario_id = $1 AND tenant_id = $2`,
+			"PATCH", `{"papel":"analista"}`, 200},
+	}
+	for i, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			ten := fmt.Sprintf("ten_corrida_%d", i)
+			a.exec(`INSERT INTO tenants (id, nome) VALUES ($1, $1)`, ten)
+			adm1 := a.semear(t, ten, "adm1."+ten+"@exemplo.com", PapelAdmin)
+			adm2 := a.semear(t, ten, "adm2."+ten+"@exemplo.com", PapelAdmin)
+			sessAdm1 := a.entrar(t, adm1)
+
+			tx1, err := a.b.App.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx1.Rollback(ctx) //nolint:errcheck // depois do Commit é no-op
+			if _, err := tx1.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, ten); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := travarMembro(ctx, tx1, ten, adm1.id, true); err != nil {
+				t.Fatalf("tx1 travarMembro: %v", err)
+			}
+			if _, err := tx1.Exec(ctx, c.sqlTx1, adm1.id, ten); err != nil {
+				t.Fatal(err)
+			}
+
+			resposta := make(chan *httptest.ResponseRecorder, 1)
+			go func() { resposta <- sessAdm1.fazer(c.metodo, "/painel/equipe/"+adm2.id, c.corpo, true) }()
+			var w *httptest.ResponseRecorder
+			for limite := time.Now().Add(10 * time.Second); w == nil; {
+				select {
+				case w = <-resposta:
+					continue
+				default:
+				}
+				var esperando int
+				if err := a.b.Dono.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+					WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&esperando); err != nil {
+					t.Fatal(err)
+				}
+				if esperando > 0 {
+					break
+				}
+				if time.Now().After(limite) {
+					t.Fatal("a requisição 2 nem terminou nem ficou esperando trava")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if err := tx1.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if w == nil {
+				w = <-resposta
+			}
+
+			var admins int
+			if err := a.b.Dono.QueryRow(ctx, `SELECT count(*) FROM associacoes WHERE tenant_id = $1 AND papel = 'admin'`,
+				ten).Scan(&admins); err != nil {
+				t.Fatal(err)
+			}
+			if admins != 1 || w.Code != 409 {
+				t.Fatalf("depois da corrida: %d admin(s), requisição 2 = %d %s; quer 1 admin e 409 (ok seria %d)",
+					admins, w.Code, w.Body, c.statusOk)
+			}
+		})
+	}
 }
 
 // Achado 1: chaves, IPs, equipe e auth deixam rastro na cadeia, sem e-mail em claro.
