@@ -19,7 +19,9 @@ import (
 const (
 	limiteEntrar   = 10 // tentativas de senha por e-mail+IP por janela
 	limiteEntrarIP = 30 // tentativas de senha por IP por janela, qualquer e-mail (barra spray antes do argon2)
-	limite2FA      = 5  // códigos TOTP por usuário por janela
+	limite2FA      = 5  // códigos TOTP por usuário por janela (em memória, por processo)
+	maxFalhasTOTP  = 5  // falhas seguidas de TOTP que travam o 2FA do usuário no banco (vale entre processos)
+	travaTOTP      = 15 * time.Minute
 	janelaLimite   = 15 * time.Minute
 
 	minSenha, maxSenha = 12, 128
@@ -28,6 +30,7 @@ const (
 
 var (
 	errCodigoRecusado  = errors.New("código TOTP recusado")
+	errTOTPTravado     = errors.New("2FA travado por excesso de falhas")
 	errConviteInvalido = errors.New("convite inexistente, usado ou vencido")
 	errEmailEmUso      = errors.New("e-mail já cadastrado")
 )
@@ -118,6 +121,13 @@ func (h *Handlers) doisFatores(w http.ResponseWriter, r *http.Request) {
 	var t tokensSessao
 	var eu respostaEu
 	err := tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
+		var travadoAte *time.Time
+		if err := tx.QueryRow(r.Context(), `SELECT travado_ate FROM totp WHERE usuario_id = $1 AND travado_ate > now()`,
+			s.UsuarioID).Scan(&travadoAte); err == nil {
+			return errTOTPTravado
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 		if err := h.consumirCodigo(r.Context(), tx, s.UsuarioID, c.Codigo); err != nil {
 			return err
 		}
@@ -132,7 +142,16 @@ func (h *Handlers) doisFatores(w http.ResponseWriter, r *http.Request) {
 		eu, err = carregarEu(r.Context(), tx, s.Sessao)
 		return err
 	})
+	if errors.Is(err, errTOTPTravado) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(travaTOTP.Seconds())))
+		escreverErro(w, http.StatusTooManyRequests, "limite_excedido")
+		return
+	}
 	if errors.Is(err, errCodigoRecusado) {
+		if err := h.registrarFalhaTOTP(r.Context(), s.UsuarioID); err != nil {
+			falhaInterna(w, r, err)
+			return
+		}
 		escreverErro(w, http.StatusUnauthorized, "nao_autorizado")
 		return
 	}
@@ -163,11 +182,21 @@ func (h *Handlers) consumirCodigo(ctx context.Context, tx pgx.Tx, usuarioID, cod
 	if !ok {
 		return errCodigoRecusado
 	}
-	tag, err := tx.Exec(ctx, `UPDATE totp SET ultimo_passo = $2, confirmado_em = coalesce(confirmado_em, now())
+	tag, err := tx.Exec(ctx, `UPDATE totp SET ultimo_passo = $2, confirmado_em = coalesce(confirmado_em, now()), falhas = 0
 		WHERE usuario_id = $1 AND ultimo_passo < $2`, usuarioID, passo)
 	if err == nil && tag.RowsAffected() == 0 {
 		return errCodigoRecusado
 	}
+	return err
+}
+
+// registrarFalhaTOTP conta a falha fora da transação do 2FA (que desfaz) e trava o 2FA na maxFalhasTOTP-ésima.
+// totp não tem RLS: o usuário é global.
+func (h *Handlers) registrarFalhaTOTP(ctx context.Context, usuarioID string) error {
+	_, err := h.pool.Exec(ctx, `UPDATE totp SET
+			travado_ate = CASE WHEN falhas + 1 >= $2 THEN now() + make_interval(secs => $3) ELSE travado_ate END,
+			falhas = CASE WHEN falhas + 1 >= $2 THEN 0 ELSE falhas + 1 END
+		WHERE usuario_id = $1`, usuarioID, maxFalhasTOTP, travaTOTP.Seconds())
 	return err
 }
 

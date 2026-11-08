@@ -50,6 +50,7 @@ func TestIntegracao(t *testing.T) {
 	t.Run("senha errada e e-mail inexistente respondem igual", a.testarSenhaErrada)
 	t.Run("totp errado, replay e limite", a.testarTOTP)
 	t.Run("login com limite por e-mail+IP", a.testarLimiteLogin)
+	t.Run("trava persistente do TOTP", a.testarTravaTOTP)
 	t.Run("csrf", a.testarCSRF)
 	t.Run("papel", a.testarPapel)
 	t.Run("isolamento de tenant 404", a.testarIsolamento)
@@ -414,4 +415,30 @@ func (a *ambiente) testarSair(t *testing.T) {
 	}
 	revivida := &cliente{a: a, ip: c.ip, sessao: sessao}
 	quer(t, revivida.fazer("GET", "/painel/auth/eu", "", false), 401, "nao_autorizado")
+}
+
+// Cinco códigos errados travam o 2FA no banco: outra instância (limitador em memória zerado) também recusa,
+// mesmo com o código certo, até a trava vencer (achado 6).
+func (a *ambiente) testarTravaTOTP(t *testing.T) {
+	u := a.semear(t, "ten_a", "trava@exemplo.com", PapelAnalista)
+	c := a.novoCliente()
+	quer(t, c.fazer("POST", "/painel/auth/entrar", `{"email":"trava@exemplo.com","senha":"`+senhaTeste+`"}`, false), 200, "")
+	for range maxFalhasTOTP {
+		quer(t, c.fazer("POST", "/painel/auth/2fa", `{"codigo":"000000"}`, true), 401, "nao_autorizado")
+	}
+	outra := Novo(a.b.App, tenant.NovoServico(a.b.App, chaveCifraTeste), Opcoes{ChaveCifra: chaveCifraTeste})
+	outra.agora = func() time.Time { return a.relogio }
+	r := chi.NewRouter()
+	outra.Rotas(r)
+	original := a.rotas
+	a.rotas = r
+	defer func() { a.rotas = original }()
+
+	w := c.fazer("POST", "/painel/auth/2fa", `{"codigo":"`+a.codigo(u.segredo)+`"}`, true)
+	quer(t, w, 429, "limite_excedido")
+	if w.Header().Get("Retry-After") == "" {
+		t.Fatal("429 sem Retry-After")
+	}
+	a.exec(`UPDATE totp SET travado_ate = now() - interval '1 second' WHERE usuario_id = $1`, u.id)
+	quer(t, c.fazer("POST", "/painel/auth/2fa", `{"codigo":"`+a.codigo(u.segredo)+`"}`, true), 200, "")
 }

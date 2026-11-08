@@ -22,3 +22,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 $$;
 REVOKE ALL ON FUNCTION auth_chave_api(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_chave_api(text) TO motor_app;
+
+-- ---------------------------------------------------------------- achado 6: trava persistente do TOTP
+-- Falhas seguidas contam no banco (valem entre processos e reinícios); na 5ª o 2FA trava por 15 min.
+ALTER TABLE totp ADD COLUMN falhas int NOT NULL DEFAULT 0, ADD COLUMN travado_ate timestamptz;
