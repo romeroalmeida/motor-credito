@@ -1,6 +1,6 @@
 # Motor de Crédito — Desenho
 
-**Data:** 07/11/2026 · **Estado:** desenho aprovado em conversa, aguardando revisão do documento · **Atualizado em 07/11/2026** (após as conferências): §4 e §7 refletem a assinatura nova, o CNPJ via BrasilAPI, a retenção e a auditoria de acesso.
+**Data:** 07/11/2026 · **Estado:** desenho aprovado em conversa, aguardando revisão do documento · **Atualizado em 07/11/2026** (após as conferências): §4 e §7 refletem a assinatura nova, o CNPJ via BrasilAPI, a retenção e a auditoria de acesso. **08/11/2026:** §5 e §7 ganham a consulta de limite (pré-aprovação) e o bloco `limite`.
 
 ## 1. Objetivo
 
@@ -109,8 +109,8 @@ bureau.protestos       int
 bureau.divida_total    int (centavos)
 renda                  int (centavos), opcional
 idade                  int, opcional
-pedido.valor           int (centavos)
-pedido.prazo           int (meses)
+pedido.valor           int (centavos); 0 na consulta de limite
+pedido.prazo           int (meses); 0 na consulta de limite
 fraude.risco           int 0–100
 fraude.sinais          list(string)
 ```
@@ -120,7 +120,14 @@ Os campos opcionais ausentes são declarados no ambiente CEL e testados com `has
 **Estrutura da política (três blocos, nesta ordem)**
 1. **Regras de corte:** uma lista ordenada de expressões booleanas. A primeira verdadeira nega, com seu código de motivo.
 2. **Faixas de preço:** linhas com condição → taxa mensal e limite. O limite pode ser um valor fixo ou um múltiplo da renda. A primeira linha que casar vale. Uma linha pode ser "nega".
-3. **Contraproposta:** se `pedido.valor` passa do limite da faixa, oferece o limite. Opcionalmente com prazo e taxa ajustados por regra. Desligada, o pedido acima do limite é negado.
+3. **Contraproposta** (no painel, aba **Oferta**; no JSON continua `contraproposta` por compatibilidade): se `pedido.valor` passa do limite da faixa, oferece o limite. Opcionalmente com prazo e taxa ajustados por regra. Desligada, o pedido acima do limite é negado. O bloco guarda também `prazos_ofertados`, os prazos em que o limite é simulado.
+
+**Consulta de limite e bloco `limite`** (atualizado em 08/11/2026)
+- O pedido é opcional. Sem pedido, quem passa nos cortes e cai numa faixa que aprova sai `pre_aprovado`, com `oferta` null. Corte, faixa que nega, sem faixa, renda que zera o limite (`SEM_LIMITE`), erro ou bureau fora: o mesmo `negado`/`documento_invalido` de sempre. Nunca `aprovado` sem pedido.
+- Toda decisão que não nega leva `limite = { valor_maximo, taxa_mensal_bps, simulacoes: [{prazo, parcela}] }`: `valor_maximo` = min(limite fixo, renda × múltiplo / 10), sem renda o fixo; taxa da faixa (sem o acréscimo da contraproposta); uma parcela Price por prazo ofertado. Estouro de parcela em qualquer simulação é erro da decisão (nega), nunca limite pela metade.
+- `prazos_ofertados`: 1 a 12, cada um de 1 a 420, sem repetir, até o `prazo_maximo` quando > 0 (senão 422 em `contraproposta.prazos_ofertados`); o motor usa ordenado. Vazio = 12/24/36 cortado no `prazo_maximo` (se nada sobrar, o próprio máximo): versões publicadas antes do campo continuam compilando.
+- Nas regras, sem pedido `pedido.valor` e `pedido.prazo` valem 0. Uma regra que corta por prazo curto corta também a consulta de limite: é a política dizendo que não há crédito.
+- Visão geral: taxa de aprovação = (aprovado + contraproposta) / consultas com pedido; taxa de pré-aprovação = pré-aprovado / consultas sem pedido. Separadas de propósito: pré-aprovação não é concessão.
 
 **Regras fixas, fora da política:** documento com dígito inválido e CPF de pessoa falecida dão sempre `documento_invalido`.
 
@@ -133,7 +140,7 @@ Os campos opcionais ausentes são declarados no ambiente CEL e testados com `has
 **Modelo inicial "Empréstimo PF"**
 - Corte: `fraude.risco >= 70`, `bureau.restricoes > 2`, `has(idade) && idade < 18`.
 - Faixas: 0–300 nega · 301–600 → 5,9% a.m., até 3× renda · 601–1000 → 2,9% a.m., até 8× renda (sem renda: limite fixo).
-- Contraproposta ligada.
+- Contraproposta ligada; prazos ofertados 12, 24 e 36 meses.
 
 **Dinheiro:** sempre em centavos (`int64`). Taxa em pontos-base. Parcela pela tabela Price, com arredondamento definido e testado.
 
@@ -182,6 +189,7 @@ Cabeçalhos: `Authorization: Bearer ck_live_<id>` (só o id; o segredo nunca vai
   "score": 642,
   "faixa_risco": "B",
   "oferta": { "valor": 600000, "prazo": 24, "taxa_mensal_bps": 290, "parcela": 35048 },
+  "limite": { "valor_maximo": 600000, "taxa_mensal_bps": 290, "simulacoes": [{ "prazo": 12, "parcela": 59918 }] },
   "pedido": { "valor": 1000000, "prazo": 24 },
   "motivos": [{ "codigo": "LIMITE_FAIXA", "texto": "Valor pedido acima do limite para o score" }],
   "antifraude": {
@@ -195,7 +203,7 @@ Cabeçalhos: `Authorization: Bearer ck_live_<id>` (só o id; o segredo nunca vai
 }
 ```
 
-`status` ∈ `aprovado | negado | contraproposta | documento_invalido | em_analise` (este último reservado para a v2). Valores em centavos.
+`status` ∈ `aprovado | negado | contraproposta | pre_aprovado | documento_invalido | em_analise` (este último reservado para a v2). `pre_aprovado` só sai sem pedido; aí `pedido` e `oferta` são null. `limite` sempre presente, null quando nega. Pedido parcial é 400 no campo que faltou. Valores em centavos.
 
 **Erros:** 400 (corpo inválido), 401 (chave ou assinatura), 409 (mesma `Idempotency-Key` com corpo diferente), 429 (limite), 503 nunca. Indisponibilidade de bureau (inclusive a BrasilAPI fora do ar ou com 429) vira decisão `negado` com `BUREAU_INDISPONIVEL`, não erro. CNPJ que a Receita não conhece (404 na BrasilAPI) vira `documento_invalido`.
 

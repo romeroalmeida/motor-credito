@@ -80,11 +80,34 @@ Ela imprime o e-mail e a senha do admin, o segredo TOTP (cadastre num app autent
 
 ```bash
 MOTOR_CHAVE=ck_live_... MOTOR_SEGREDO=... scripts/consulta-exemplo.sh 000.000.004-34 1000000 24
+MOTOR_CHAVE=ck_live_... MOTOR_SEGREDO=... scripts/consulta-exemplo.sh 000.000.004-34 limite   # sem pedido
+```
+
+**Consulta de limite (pré-aprovação):** o `pedido` é opcional. Sem ele, quem passa nos cortes e cai numa faixa que
+aprova recebe `pre_aprovado` (nunca `aprovado`), `oferta: null` e o limite com as parcelas nos prazos ofertados da
+política (aba Oferta do painel; padrão 12/24/36). Pedido parcial (só valor ou só prazo) é 400 no campo que faltou.
+Com pedido, o `limite` vem junto de `aprovado` e `contraproposta`; negado e documento inválido trazem `limite: null`.
+
+```json
+{ "documento": "000.000.004-34", "finalidade": "concessao_credito", "dados": { "renda": 500000 } }
+```
+
+```json
+{
+  "status": "pre_aprovado",
+  "oferta": null,
+  "pedido": null,
+  "limite": {
+    "valor_maximo": 3000000,
+    "taxa_mensal_bps": 290,
+    "simulacoes": [{ "prazo": 12, "parcela": 299590 }, { "prazo": 24, "parcela": 175239 }, { "prazo": 36, "parcela": 135369 }]
+  }
+}
 ```
 
 **Postman:** importe `postman/motor-credito.postman_collection.json` e `postman/local.postman_environment.json`,
 preencha `chave_id`, `chave_segredo` e `senha`, e ponha o código do autenticador em `totp` antes do 2FA. A coleção
-assina sozinha cada requisição e cobre aprovado, contraproposta, negado, falecido, CPF inválido, CNPJ real,
+assina sozinha cada requisição e cobre aprovado, contraproposta, pré-aprovação (só dados), negado, falecido, CPF inválido, CNPJ real,
 idempotência e o painel. `make postman` roda a semente e valida a coleção inteira com newman.
 
 Documentos de teste do bureau simulado: [`internal/bureau/README.md`](internal/bureau/README.md).
