@@ -151,7 +151,8 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     await page.getByRole('button', { name: 'Buscar' }).click()
     await page.locator(`a[href="/consultas/${consultaId}"]`).click()
     await expect(page.getByText(`Versão ${versao}`, { exact: true })).toBeVisible()
-    await expect(page.getByText(`${taxaTexto}% a.m.`)).toBeVisible()
+    // A taxa aparece na oferta e no bloco Limite (mesma faixa).
+    await expect(page.getByText(`${taxaTexto}% a.m.`)).toHaveCount(2)
   })
 
   await test.step('chave criada na tela assina a API (id no Bearer, segredo só na assinatura)', async () => {
@@ -195,6 +196,23 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     await resposta.getByRole('link', { name: /Ver no painel/ }).click()
     await expect(page).toHaveURL(/\/consultas\/cons_/)
     await expect(page.getByText(`Versão ${versao}`, { exact: true })).toBeVisible()
+  })
+
+  await test.step('simulador: consulta sem valor (pré-aprovação) sai Pré-aprovado com o limite', async () => {
+    await page.getByRole('link', { name: 'Simulador de integração' }).click()
+    await page.getByRole('group', { name: 'Exemplos' }).getByRole('button', { name: 'Pré-aprovação' }).click()
+    await expect(page.getByLabel('Valor pedido (R$)')).toHaveValue('')
+    await page.getByRole('button', { name: 'Enviar consulta' }).click()
+    const resposta = page.getByRole('region', { name: 'Resposta' })
+    await expect(resposta.getByText('200', { exact: true })).toBeVisible()
+    await expect(resposta.getByText('Pré-aprovado', { exact: true })).toBeVisible()
+    const limite = resposta.getByRole('region', { name: 'Limite' })
+    await expect(limite.getByText('Valor máximo')).toBeVisible()
+    await expect(limite.getByRole('row')).toHaveCount(4) // cabeçalho + 12, 24 e 36 meses
+    await resposta.getByRole('link', { name: /Ver no painel/ }).click()
+    await expect(page).toHaveURL(/\/consultas\/cons_/)
+    await expect(page.getByText('Pré-aprovado', { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Limite' })).toBeVisible()
   })
 
   await test.step('nenhuma violação de CSP no caminho', async () => {

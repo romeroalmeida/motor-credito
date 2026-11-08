@@ -147,6 +147,62 @@
           ]
         },
         {
+          "name": "Pré-aprovação (só dados)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"00000000434\",\n  \"finalidade\": \"concessao_credito\",\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"renda\": 500000\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Sem pedido (valor e prazo): consulta de limite. Quem passa na política sai pre_aprovado, sem oferta, com o limite e as parcelas nos prazos ofertados."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status pre_aprovado, sem oferta e sem pedido', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('pre_aprovado');",
+                  "  pm.expect(j.oferta).to.eql(null);",
+                  "  pm.expect(j.pedido).to.eql(null);",
+                  "});",
+                  "pm.test('limite com valor máximo, taxa e uma parcela por prazo ofertado', () => {",
+                  "  const l = pm.response.json().limite;",
+                  "  pm.expect(l.valor_maximo).to.be.above(0);",
+                  "  pm.expect(l.taxa_mensal_bps).to.be.above(0);",
+                  "  pm.expect(l.simulacoes.map((s) => s.prazo)).to.eql([12, 24, 36]);",
+                  "  l.simulacoes.forEach((s) => pm.expect(s.parcela).to.be.above(0));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Negado (score baixo)",
           "request": {
             "method": "POST",
