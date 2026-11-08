@@ -131,7 +131,8 @@ make e2e       # Playwright contra a pilha do compose: entra com TOTP, publica u
 - **O CPF é sempre simulado.** Não há fonte pública de CPF, e nenhum CPF sai para a rede.
 - **O CNPJ real vem da BrasilAPI, que não tem SLA.** Ela traz só o cadastro público da Receita (razão social,
   situação, abertura). Se estiver fora do ar ou limitando (429), toda consulta de CNPJ é negada com
-  `BUREAU_INDISPONIVEL`. CNPJ alfanumérico ainda não é aceito por ela. Para simular sem rede, use `BUREAU_CNPJ=simulado`.
+  `BUREAU_INDISPONIVEL`. CNPJ alfanumérico ainda não é aceito por ela. No código o padrão de `BUREAU_CNPJ` é `simulado` (sem rede); o
+  `docker compose` de demonstração liga `brasilapi` mesmo com a variável vazia. Para desligar, `BUREAU_CNPJ=simulado`.
 - A velocidade entre clientes sai do Postgres (sem Redis). Compartilhar esse sinal entre clientes precisaria estar
   em contrato antes de virar produto.
 - Virar produto pode exigir contrato com bureaus e, conforme o modelo, autorização do Bacen.
