@@ -9,3 +9,8 @@ coverage/
 playwright-report/
 test-results/
 .DS_Store
+
+# cópias locais do workspace do Postman (app sincroniza aqui; a coleção oficial é postman/*.json)
+.postman/
+postman/collections/
+postman/environments/
