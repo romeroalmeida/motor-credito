@@ -1,6 +1,7 @@
 package politica
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
@@ -140,5 +141,13 @@ func TestPrazosOfertados(t *testing.T) {
 	d := avaliar(t, compilar(t, pol), Contexto{Score: 700})
 	if !reflect.DeepEqual(d.Limite, limiteEsperado(3_000_000, 290, 6, 36)) || pol.Contraproposta.PrazosOfertados[0] != 36 {
 		t.Fatalf("limite %+v, entrada %v", d.Limite, pol.Contraproposta.PrazosOfertados)
+	}
+}
+
+// Política antiga relida do banco não ganha "prazos_ofertados": null (o painel trataria null como lista).
+func TestPrazosOfertados_JSONSemCampo(t *testing.T) {
+	saida, err := json.Marshal(Contraproposta{Ativa: true})
+	if err != nil || strings.Contains(string(saida), "prazos_ofertados") {
+		t.Fatalf("json %s, %v", saida, err)
 	}
 }

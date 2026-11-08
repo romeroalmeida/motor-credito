@@ -189,6 +189,18 @@ describe('editor de política', () => {
     expect(await screen.findByText('Alterações não salvas')).toBeInTheDocument()
   })
 
+  it('política antiga sem prazos ofertados (null) mostra o padrão e publica', async () => {
+    const original = await (await fetch('http://localhost/painel/politicas')).json()
+    original.rascunho.contraproposta.prazos_ofertados = null
+    server.use(http.get('*/painel/politicas', () => HttpResponse.json(original)))
+    const usuario = userEvent.setup()
+    renderizarPagina(<PoliticaPage />)
+    await usuario.click(await screen.findByRole('tab', { name: 'Oferta' }))
+    expect(screen.getByText(/o motor usa 12, 24, 36 meses/)).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Publicar' }))
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  })
+
   it('prazo ofertado acima do prazo máximo é barrado ao salvar', async () => {
     const usuario = userEvent.setup()
     renderizarPagina(<PoliticaPage />)

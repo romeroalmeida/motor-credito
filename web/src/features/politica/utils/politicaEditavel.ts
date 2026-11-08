@@ -171,7 +171,9 @@ export function validarLocal(p: PoliticaEditavel): ProblemaRegra[] {
     }
   })
 
-  const { prazo_maximo, acrescimo_taxa_bps, prazos_ofertados = [] } = p.contraproposta
+  const { prazo_maximo, acrescimo_taxa_bps } = p.contraproposta
+  // Versão antiga pode vir sem o campo (ou null): vale o padrão do motor.
+  const prazos_ofertados = p.contraproposta.prazos_ofertados ?? []
   if (invalido(prazo_maximo))
     problemas.push({ caminho: 'contraproposta.prazo_maximo', motivo: 'Prazo inválido.' })
   // O prazo máximo pode ter baixado depois de os prazos entrarem na lista.

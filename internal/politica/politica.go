@@ -48,7 +48,7 @@ type Contraproposta struct {
 	PrazoMaximo      int  `json:"prazo_maximo"` // 0 = mantém o prazo pedido
 	AcrescimoTaxaBps int  `json:"acrescimo_taxa_bps"`
 	// PrazosOfertados são os prazos (meses) das simulações do limite. Vazio = padrão 12/24/36 (políticas antigas).
-	PrazosOfertados []int `json:"prazos_ofertados"`
+	PrazosOfertados []int `json:"prazos_ofertados,omitempty"`
 }
 
 // Contexto é o que as regras enxergam. Renda e Idade nil = não informados.
