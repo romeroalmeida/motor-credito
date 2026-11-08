@@ -1,3 +1,4 @@
+import './configurarZod' // antes de tudo: os esquemas do zod são criados ao importar os módulos
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from '@/app/App'

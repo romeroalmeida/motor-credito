@@ -87,6 +87,16 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
   page,
   request,
 }) => {
+  // CSP do nginx: nenhuma violação em todas as telas que o fluxo abre.
+  const violacoes: string[] = []
+  page.on('console', (msg) => {
+    if (/Content Security Policy|Refused to/i.test(msg.text())) violacoes.push(msg.text())
+  })
+  // Texto (não função): o tsconfig do e2e não tem os tipos do DOM.
+  await page.addInitScript({
+    content: `document.addEventListener('securitypolicyviolation', (e) =>
+      console.error('Refused to load (CSP): ' + e.violatedDirective + ' ' + e.blockedURI))`,
+  })
   const demo = semear()
   const taxaBps = 100 + Math.floor(Math.random() * 800)
   const taxaTexto = (taxaBps / 100).toFixed(2).replace('.', ',')
@@ -149,6 +159,7 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     await page.getByLabel('Nome da nova chave').fill(`e2e ${Date.now()}`)
     await page.getByRole('button', { name: 'Criar chave' }).click()
     const dialogo = page.getByRole('alertdialog', { name: 'Sua nova chave' })
+    await expect(dialogo.getByTestId('segredo')).toHaveCount(2)
     const [chave, segredo] = await dialogo.getByTestId('segredo').allTextContents()
     expect(chave).toMatch(/^ck_live_[0-9A-Z]{26}$/)
     expect(segredo).toMatch(/^[0-9a-f]{64}$/)
@@ -168,5 +179,11 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     comSegredoNoBearer.Authorization = `Bearer ${chave}_${segredo}`
     const recusada = await request.post('/v1/consultas', { headers: comSegredoNoBearer, data: corpo })
     expect(recusada.status()).toBe(401)
+  })
+
+  await test.step('nenhuma violação de CSP no caminho', async () => {
+    const resposta = await request.get('/')
+    expect(resposta.headers()['content-security-policy']).toContain("script-src 'self'")
+    expect(violacoes).toEqual([])
   })
 })
