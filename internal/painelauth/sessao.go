@@ -25,7 +25,7 @@ const (
 	CabecalhoCSRF = "X-CSRF"
 
 	duracaoPendente = 10 * time.Minute // entre a senha e o TOTP
-	duracaoSessao   = 12 * time.Hour
+	duracaoSessao   = 12 * time.Hour   // teto; além dele, 30 min sem uso derrubam a sessão (auth_sessao, migration 0002)
 	maxUserAgent    = 300
 )
 

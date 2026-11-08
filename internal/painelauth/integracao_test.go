@@ -51,6 +51,7 @@ func TestIntegracao(t *testing.T) {
 	t.Run("totp errado, replay e limite", a.testarTOTP)
 	t.Run("login com limite por e-mail+IP", a.testarLimiteLogin)
 	t.Run("trava persistente do TOTP", a.testarTravaTOTP)
+	t.Run("sessão expira por inatividade", a.testarInatividade)
 	t.Run("csrf", a.testarCSRF)
 	t.Run("papel", a.testarPapel)
 	t.Run("isolamento de tenant 404", a.testarIsolamento)
@@ -462,4 +463,19 @@ func (a *ambiente) testarCadastroSemEnumeracao(t *testing.T) {
 	if existente.Code != inventado.Code || existente.Body.String() != inventado.Body.String() {
 		t.Fatalf("respostas diferentes: %d %s / %d %s", existente.Code, existente.Body, inventado.Code, inventado.Body)
 	}
+}
+
+// 30 min sem uso derrubam a sessão; usar antes disso empurra o prazo (achado 9).
+func (a *ambiente) testarInatividade(t *testing.T) {
+	u := a.semear(t, "ten_a", "inativo@exemplo.com", PapelAnalista)
+	c := a.entrar(t, u)
+	a.exec(`UPDATE sessoes SET ultimo_uso_em = now() - interval '29 minutes' WHERE usuario_id = $1`, u.id)
+	quer(t, c.fazer("GET", "/painel/auth/eu", "", false), 200, "")
+	var parado bool
+	if err := a.b.Dono.QueryRow(context.Background(), `SELECT bool_or(ultimo_uso_em < now() - interval '1 minute')
+		FROM sessoes WHERE usuario_id = $1 AND encerrada_em IS NULL`, u.id).Scan(&parado); err != nil || parado {
+		t.Fatalf("uso não empurrou ultimo_uso_em (parado=%v, err=%v)", parado, err)
+	}
+	a.exec(`UPDATE sessoes SET ultimo_uso_em = now() - interval '31 minutes' WHERE usuario_id = $1`, u.id)
+	quer(t, c.fazer("GET", "/painel/auth/eu", "", false), 401, "nao_autorizado")
 }

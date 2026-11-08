@@ -26,3 +26,20 @@ GRANT EXECUTE ON FUNCTION auth_chave_api(text) TO motor_app;
 -- ---------------------------------------------------------------- achado 6: trava persistente do TOTP
 -- Falhas seguidas contam no banco (valem entre processos e reinícios); na 5ª o 2FA trava por 15 min.
 ALTER TABLE totp ADD COLUMN falhas int NOT NULL DEFAULT 0, ADD COLUMN travado_ate timestamptz;
+
+-- ---------------------------------------------------------------- achado 9: sessão expira por inatividade
+-- Além do teto de 12 h (expira_em), a sessão cai depois de 30 min sem uso. auth_sessao passa a marcar o uso
+-- (por isso VOLATILE): cada request autenticada empurra ultimo_uso_em.
+ALTER TABLE sessoes ADD COLUMN ultimo_uso_em timestamptz NOT NULL DEFAULT now();
+
+CREATE OR REPLACE FUNCTION auth_sessao(p_token_hash bytea)
+RETURNS TABLE (sessao_id text, usuario_id text, tenant_id text, papel text, csrf_hash bytea,
+               dois_fatores_em timestamptz, expira_em timestamptz)
+LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+    UPDATE public.sessoes s SET ultimo_uso_em = now()
+    FROM public.associacoes a
+    WHERE a.usuario_id = s.usuario_id AND a.tenant_id = s.tenant_id
+      AND s.token_hash = p_token_hash AND s.encerrada_em IS NULL AND s.expira_em > now()
+      AND s.ultimo_uso_em > now() - interval '30 minutes'
+    RETURNING s.id, s.usuario_id, s.tenant_id, a.papel, s.csrf_hash, s.dois_fatores_em, s.expira_em
+$$;
