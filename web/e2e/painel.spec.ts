@@ -181,6 +181,22 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     expect(recusada.status()).toBe(401)
   })
 
+  await test.step('simulador: exemplo Aprovado, status 200 e "Ver no painel" abre a consulta', async () => {
+    await page.getByRole('link', { name: 'Simulador de integração' }).click()
+    await page.getByRole('group', { name: 'Exemplos' }).getByRole('button', { name: 'Aprovado' }).click()
+    await page.getByRole('button', { name: 'Enviar consulta' }).click()
+    const resposta = page.getByRole('region', { name: 'Resposta' })
+    await expect(resposta.getByText('200', { exact: true })).toBeVisible()
+    await expect(resposta.getByText('Aprovado', { exact: true })).toBeVisible()
+    const assinatura = page
+      .getByRole('region', { name: 'Requisição' })
+      .getByRole('row', { name: /X-Assinatura/ })
+    await expect(assinatura).toContainText(/[0-9a-f]{64}/)
+    await resposta.getByRole('link', { name: /Ver no painel/ }).click()
+    await expect(page).toHaveURL(/\/consultas\/cons_/)
+    await expect(page.getByText(`Versão ${versao}`, { exact: true })).toBeVisible()
+  })
+
   await test.step('nenhuma violação de CSP no caminho', async () => {
     const resposta = await request.get('/')
     expect(resposta.headers()['content-security-policy']).toContain("script-src 'self'")
