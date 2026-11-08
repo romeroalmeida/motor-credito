@@ -700,7 +700,14 @@ components:
     XAssinatura:
       { name: X-Assinatura, in: header, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
     IdempotencyKey:
-      { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Reenvio com a mesma chave e o mesmo corpo devolve a decisão já gravada, sem nova consulta ao bureau.
+        Mesma chave com outro corpo → 409 conflito_idempotencia, inclusive quando as duas requisições chegam
+        ao mesmo tempo (a segunda espera a primeira terminar).
+      schema: { type: string, minLength: 1, maxLength: 255 }
     XCSRF:
       { name: X-CSRF, in: header, required: true, schema: { type: string }, description: Igual ao cookie csrf }
 
