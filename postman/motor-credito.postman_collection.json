@@ -1,0 +1,797 @@
+{
+  "info": {
+    "_postman_id": "1efa2dfa-3342-5d0e-9b75-f9e68ba3fc9b",
+    "name": "Motor de Crédito",
+    "description": "API pública (POST /v1/consultas, assinada com HMAC) e painel (sessão por cookie + CSRF).\n\n1. `docker compose up -d --build` e rode a semente (ver README).\n2. Importe também `local.postman_environment.json` e preencha chave_id, chave_segredo, email, senha.\n3. Painel: antes do 2FA, ponha o código atual do autenticador em `totp`.\n\nDocumentos de teste: internal/bureau/README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "API pública",
+      "description": "Pre-request desta pasta assina cada requisição (Bearer ck_live_<id>, X-Timestamp, Idempotency-Key, X-Assinatura).",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Assina toda requisição da API pública (desenho §4):",
+              "//   Authorization: Bearer ck_live_<id>   (só o id; o segredo nunca vai em cabeçalho)",
+              "//   X-Timestamp: unix em segundos",
+              "//   Idempotency-Key: uuid novo, ou {{idem_fixa}} quando a variável estiver preenchida",
+              "//   X-Assinatura: hex(HMAC-SHA256(segredo, ts + \".\" + idem + \".\" + corpo cru))",
+              "const CryptoJS = require('crypto-js');",
+              "const chaveId = pm.variables.get('chave_id');",
+              "const segredo = pm.variables.get('chave_segredo');",
+              "if (!chaveId || !segredo) {",
+              "  throw new Error('preencha chave_id e chave_segredo no ambiente (a semente imprime os dois)');",
+              "}",
+              "// O corpo assinado precisa ser byte a byte o enviado: resolve as {{variáveis}} antes e grava o corpo resolvido.",
+              "const corpo = pm.variables.replaceIn(pm.request.body ? pm.request.body.raw || '' : '');",
+              "if (pm.request.body) pm.request.body.update(corpo);",
+              "const ts = Math.floor(Date.now() / 1000).toString();",
+              "const idem = pm.variables.get('idem_fixa') || require('uuid').v4();",
+              "const assinatura = CryptoJS.HmacSHA256(ts + '.' + idem + '.' + corpo, segredo).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + chaveId });",
+              "pm.request.headers.upsert({ key: 'X-Timestamp', value: ts });",
+              "pm.request.headers.upsert({ key: 'Idempotency-Key', value: idem });",
+              "pm.request.headers.upsert({ key: 'X-Assinatura', value: assinatura });",
+              "pm.request.headers.upsert({ key: 'Content-Type', value: 'application/json' });"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Aprovado (CPF score alto)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 1000000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Fixture 000.000.004-34: score 920, renda R$ 12.000. Faixa A."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status aprovado', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('aprovado');",
+                  "});",
+                  "pm.test('oferta e versão da política', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.oferta.valor).to.eql(1000000);",
+                  "  pm.expect(j.politica.versao).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Contraproposta (valor alto)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 50000000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Mesmo CPF pedindo R$ 500.000: acima do limite da faixa, recebe o limite."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status contraproposta', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('contraproposta');",
+                  "  pm.expect(j.motivos.map((x) => x.codigo)).to.include('LIMITE_FAIXA');",
+                  "});",
+                  "pm.test('oferta menor que o pedido', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.oferta.valor).to.be.below(j.pedido.valor);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Negado (score baixo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.003-53\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 100000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Fixture 000.000.003-53: score 150, restrições e protestos."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status negado', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('negado');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Falecido → documento_invalido",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.001-91\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 100000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Fixture 000.000.001-91: o bureau diz falecido; a resposta não diz qual dos dois motivos."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status documento_invalido', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('documento_invalido');",
+                  "  pm.expect(j.motivos.map((x) => x.codigo)).to.include('DOCUMENTO_INVALIDO');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "CPF inválido (dígito errado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"123.456.789-00\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 100000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com status documento_invalido', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('documento_invalido');",
+                  "  pm.expect(j.motivos.map((x) => x.codigo)).to.include('DOCUMENTO_INVALIDO');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "CNPJ real (Banco do Brasil, BrasilAPI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"00.000.000/0001-91\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 5000000,\n    \"prazo\": 36\n  },\n  \"dados\": {\n    \"email\": \"financeiro@exemplo.com.br\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cadastro da Receita via BrasilAPI (BUREAU_CNPJ=brasilapi, padrão do compose); score continua simulado. Sem SLA: fora do ar = negado BUREAU_INDISPONIVEL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 e decisão de crédito (não documento_invalido)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(['aprovado', 'contraproposta', 'negado']).to.include(j.status);",
+                  "  // Com BUREAU_CNPJ=brasilapi o cadastro vem da Receita; BrasilAPI fora do ar nega com BUREAU_INDISPONIVEL (fail-closed).",
+                  "  console.log('CNPJ 00000000000191:', j.status, j.motivos.map((m) => m.codigo).join(','), 'sinais:', j.antifraude && j.antifraude.sinais);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Idempotência 1/3 — primeira chamada",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 200000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Usa uma Idempotency-Key nova e a guarda em idem_fixa."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "// Fixa a Idempotency-Key usada aqui para as duas próximas requisições.",
+                  "pm.collectionVariables.set('idem_fixa', pm.request.headers.get('Idempotency-Key'));",
+                  "pm.collectionVariables.set('idem_resposta', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Idempotência 2/3 — reenvio idêntico",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 200000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Mesmo corpo, mesma chave (idem_fixa): devolve a decisão gravada sem decidir de novo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('mesma Idempotency-Key e mesmo corpo → mesma resposta', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('idem_resposta'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Idempotência 3/3 — mesma chave, corpo diferente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 300000,\n    \"prazo\": 24\n  },\n  \"dados\": {\n    \"nome\": \"Beatriz Ficticia\",\n    \"email\": \"beatriz@exemplo.com.br\",\n    \"ip\": \"200.150.10.1\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Outro valor com a mesma chave: 409. Limpa idem_fixa no fim."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 conflito_idempotencia', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().erro).to.eql('conflito_idempotencia');",
+                  "});",
+                  "pm.collectionVariables.unset('idem_fixa');",
+                  "pm.collectionVariables.unset('idem_resposta');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Painel",
+      "description": "entrar → 2fa → telas. O Postman guarda os cookies; o pre-request copia o cookie csrf para X-CSRF.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Cookies de sessão: o Postman guarda o \"sessao\" (httpOnly) e o \"csrf\" sozinho. Toda escrita no painel precisa",
+              "// repetir o cookie csrf no cabeçalho X-CSRF (double submit). Lê do cookie jar; se o domínio não estiver liberado",
+              "// para scripts (Postman app: Cookies → Domains Allowlist → 127.0.0.1), usa o valor guardado pelos testes.",
+              "const usar = (valor) => {",
+              "  if (valor) pm.request.headers.upsert({ key: 'X-CSRF', value: valor });",
+              "};",
+              "try {",
+              "  pm.cookies.jar().get(pm.variables.replaceIn('{{base_url}}'), 'csrf', (erro, valor) => {",
+              "    usar(!erro && valor ? valor : pm.collectionVariables.get('csrf'));",
+              "  });",
+              "} catch (e) {",
+              "  usar(pm.collectionVariables.get('csrf'));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Entrar (senha)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/painel/auth/entrar",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "auth",
+                "entrar"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"senha\": \"{{senha}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 e próximo passo 2fa', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().proximo).to.eql('2fa');",
+                  "});",
+                  "",
+                  "// Guarda o csrf da resposta (fallback do pre-request quando o cookie jar não está liberado para scripts).",
+                  "if (pm.cookies.has('csrf')) pm.collectionVariables.set('csrf', pm.cookies.get('csrf'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2FA (código TOTP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/painel/auth/2fa",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "auth",
+                "2fa"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigo\": \"{{totp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Digite o código atual do app autenticador na variável totp (ou: go run scripts/totp.go <segredo>)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com a sessão completa', () => pm.response.to.have.status(200));",
+                  "",
+                  "// Guarda o csrf da resposta (fallback do pre-request quando o cookie jar não está liberado para scripts).",
+                  "if (pm.cookies.has('csrf')) pm.collectionVariables.set('csrf', pm.cookies.get('csrf'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eu",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/painel/auth/eu",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "auth",
+                "eu"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com papel admin', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(JSON.stringify(pm.response.json())).to.include('admin');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Política (estado)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/painel/politicas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "politicas"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com versão publicada', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().versao_publicada).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultas — busca por documento",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/painel/consultas/busca",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "consultas",
+                "busca"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"000.000.004-34\",\n  \"limite\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Documento vai no corpo (POST), nunca na URL: não cai em log de acesso."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com consultas do CPF, documento só mascarado', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.itens).to.be.an('array').that.is.not.empty;",
+                  "  pm.expect(pm.response.text()).to.not.include('00000000434');",
+                  "  pm.expect(j.itens[0].documento_mascarado).to.include('***');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Auditoria",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/painel/auditoria",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "auditoria"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 com registros e hash conferido', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.itens).to.be.an('array').that.is.not.empty;",
+                  "  pm.expect(j.itens.every((r) => r.hash_ok)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Auditoria — integridade da cadeia",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/painel/auditoria/integridade",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "painel",
+                "auditoria",
+                "integridade"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "csrf",
+      "value": ""
+    },
+    {
+      "key": "idem_fixa",
+      "value": ""
+    },
+    {
+      "key": "idem_resposta",
+      "value": ""
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 # CGO desligado: binário estático e sem depender do toolchain C da máquina.
 export CGO_ENABLED=0
 
-.PHONY: dev banco test test-curto lint web-install e2e
+.PHONY: dev banco test test-curto lint web-install e2e postman
 
 banco:
 	docker compose up -d postgres
@@ -33,3 +33,8 @@ web-install:
 e2e:
 	docker compose up -d --build --wait api web
 	set -a; . ./.env; set +a; AMBIENTE=desenvolvimento npm --prefix web run test:e2e
+
+# Coleção do Postman contra a pilha do compose (newman); roda a semente antes.
+postman:
+	docker compose up -d --build --wait api web
+	scripts/newman.sh
