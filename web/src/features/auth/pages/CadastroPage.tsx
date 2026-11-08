@@ -28,8 +28,9 @@ const esquema = z
   })
 
 function mensagemCadastro(erro: ErroApi): string {
-  if (erro.status === 404) return 'Convite inválido, expirado ou já usado. Peça um novo a quem convidou você.'
-  if (erro.status === 409) return 'Este e-mail já tem conta. Entre com ela.'
+  // A API responde 404 igual para convite inválido e para e-mail que já tem conta (não revela quem tem conta).
+  if (erro.status === 404)
+    return 'Não deu para usar este convite: ele é inválido, venceu, já foi usado ou o e-mail já tem conta. Se você já tem conta, entre com ela; se não, peça um novo convite a quem convidou você.'
   return erro.mensagem
 }
 

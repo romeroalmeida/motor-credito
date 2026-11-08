@@ -39,11 +39,13 @@ describe('cadastro por convite', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/visao-geral'))
   })
 
-  it('convite inválido diz o que fazer', async () => {
+  it('convite recusado (404 genérico) cobre convite ruim e e-mail com conta', async () => {
     const usuario = userEvent.setup()
     renderizarApp('/cadastro?token=vencido')
     await screen.findByRole('heading', { name: 'Criar sua conta' })
     await preencher(usuario, 'uma senha bem longa')
-    expect(await screen.findByText(/Convite inválido, expirado ou já usado/)).toBeInTheDocument()
+    const aviso = await screen.findByText(/Não deu para usar este convite/)
+    expect(aviso).toHaveTextContent('já foi usado ou o e-mail já tem conta')
+    expect(aviso).toHaveTextContent('Se você já tem conta, entre com ela')
   })
 })
