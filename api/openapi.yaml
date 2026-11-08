@@ -980,9 +980,9 @@ components:
         condicoes: { type: array, items: { $ref: "#/components/schemas/Condicao" } }
         cel: { type: string }
         nega: { type: boolean }
-        taxa_bps: { type: integer, minimum: 0 }
+        taxa_bps: { type: integer, minimum: 0, maximum: 100000, description: "Pontos-base ao mês (teto 100000; acima → 422, regra faixas[i])" }
         limite_fixo: { type: integer, format: int64, minimum: 0, maximum: 10000000000000, description: "Centavos (teto 1e13; acima → 422 na publicação, regra faixas[i])" }
-        multiplo_renda_x10: { type: integer, minimum: 0, description: "30 = 3,0× renda" }
+        multiplo_renda_x10: { type: integer, minimum: 0, maximum: 1000, description: "30 = 3,0× renda" }
 
     Contraproposta:
       type: object
@@ -990,7 +990,7 @@ components:
       properties:
         ativa: { type: boolean }
         prazo_maximo: { type: integer, minimum: 0, description: 0 = mantém o prazo pedido }
-        acrescimo_taxa_bps: { type: integer, minimum: 0 }
+        acrescimo_taxa_bps: { type: integer, minimum: 0, maximum: 100000, description: "Teto 100000; acima → 422, regra contraproposta" }
 
     Politica:
       type: object

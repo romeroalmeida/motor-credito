@@ -285,6 +285,10 @@ func TestCompilar_Recusa(t *testing.T) {
 	semRotulo.Faixas[1].Rotulo = ""
 	negativo := ModeloEmprestimoPF()
 	negativo.Contraproposta.PrazoMaximo = -1
+	taxaAcima := ModeloEmprestimoPF()
+	taxaAcima.Faixas[1].TaxaBps = TaxaMaximaBps + 1
+	acrescimoAcima := ModeloEmprestimoPF()
+	acrescimoAcima.Contraproposta.AcrescimoTaxaBps = TaxaMaximaBps + 1
 	limiteAcima := ModeloEmprestimoPF()
 	limiteAcima.Faixas[1].LimiteFixo = dinheiro.ValorMaximo + 1
 
@@ -305,6 +309,8 @@ func TestCompilar_Recusa(t *testing.T) {
 		{"faixa sem rótulo", semRotulo, "faixas[1]", "sem rótulo"},
 		{"contraproposta negativa", negativo, "contraproposta", "negativos"},
 		{"limite fixo acima do teto", limiteAcima, "faixas[1]", "limite fixo acima"},
+		{"taxa acima do teto", taxaAcima, "faixas[1]", "taxa acima"},
+		{"acréscimo acima do teto", acrescimoAcima, "contraproposta", "acréscimo de taxa acima"},
 		{"renda sem has", avancada("renda > 100"), "cortes[0]", "renda usada sem has(renda)"},
 		{"idade sem has", avancada("idade < 18"), "cortes[0]", "idade usada sem has(idade)"},
 		{"has depois do uso", avancada("idade < 18 && has(idade)"), "cortes[0]", "sem has(idade)"},
@@ -416,6 +422,16 @@ func TestLimiteFixoNoTeto(t *testing.T) {
 	c.politica.Faixas[0].LimiteFixo = math.MaxInt64
 	if d, err := c.Avaliar(Contexto{PedidoValor: 9_000_000_000_000_000_000, PedidoPrazo: 1}); err == nil {
 		t.Fatalf("parcela estourada virou decisão: %+v", d)
+	}
+}
+
+// Achado 2: taxa e acréscimo no teto exato compilam, e a contraproposta soma sem estourar.
+func TestTaxaNoTeto(t *testing.T) {
+	p := Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: TaxaMaximaBps, LimiteFixo: dinheiro.ValorMaximo}},
+		Contraproposta: Contraproposta{Ativa: true, AcrescimoTaxaBps: TaxaMaximaBps}}
+	d := avaliar(t, compilar(t, p), Contexto{PedidoValor: dinheiro.ValorMaximo + 1, PedidoPrazo: 1})
+	if d.Status != Contraproposto || d.Oferta.TaxaBps != 2*TaxaMaximaBps || d.Oferta.Parcela <= 0 {
+		t.Fatalf("no teto: %+v", d.Oferta)
 	}
 }
 

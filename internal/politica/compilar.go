@@ -22,6 +22,8 @@ const (
 	maxSinais        = 16   // tamanho máximo de fraude.sinais assumido pela estimativa de custo
 	maxTamanhoSinal  = 64   // tamanho máximo de cada sinal assumido pela estimativa de custo
 	maxMultiploRenda = 1000 // 100× a renda
+	// TaxaMaximaBps é o teto de taxa_bps e de acrescimo_taxa_bps (1000% a.m.): a soma nunca estoura int.
+	TaxaMaximaBps    = 100_000
 	recursaoMaxima   = 32
 	identOpcional    = "opcional" // mapa oculto que o has() consulta; o cliente não o referencia
 	campoSinais      = "fraude.sinais"
@@ -154,6 +156,9 @@ func validarContraproposta(cp Contraproposta) error {
 	if cp.PrazoMaximo < 0 || cp.AcrescimoTaxaBps < 0 {
 		return errors.New("prazo máximo e acréscimo de taxa não podem ser negativos")
 	}
+	if cp.AcrescimoTaxaBps > TaxaMaximaBps {
+		return fmt.Errorf("acréscimo de taxa acima de %d bps", TaxaMaximaBps)
+	}
 	return nil
 }
 
@@ -167,6 +172,8 @@ func validarFaixa(f Faixa) error {
 		return errors.New("taxa, limite e múltiplo não podem ser negativos")
 	case f.LimiteFixo == 0:
 		return errors.New("faixa que aprova precisa de limite fixo maior que zero")
+	case f.TaxaBps > TaxaMaximaBps:
+		return fmt.Errorf("taxa acima de %d bps", TaxaMaximaBps)
 	case f.LimiteFixo > dinheiro.ValorMaximo:
 		return fmt.Errorf("limite fixo acima de %d centavos", dinheiro.ValorMaximo)
 	case f.MultiploRenda > maxMultiploRenda:
