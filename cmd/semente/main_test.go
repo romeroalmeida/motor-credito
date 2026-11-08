@@ -46,6 +46,10 @@ func TestSemearPermiteEntrar(t *testing.T) {
 	if _, err := semear(ctx, b.App, chaveCifra); err != nil {
 		t.Fatalf("primeira semente: %v", err)
 	}
+	// TOTP no formato antigo (ilegível com subchave + AAD): a semente seguinte troca por um novo.
+	if _, err := b.Dono.Exec(ctx, `UPDATE totp SET segredo_cifrado = '\x00'`); err != nil {
+		t.Fatal(err)
+	}
 	d, err := semear(ctx, b.App, chaveCifra) // de novo: reaproveita tenant e admin
 	if err != nil {
 		t.Fatalf("segunda semente: %v", err)

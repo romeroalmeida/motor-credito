@@ -154,11 +154,11 @@ func (h *Handlers) consumirCodigo(ctx context.Context, tx pgx.Tx, usuarioID, cod
 	if err != nil {
 		return err
 	}
-	segredo, err := plataforma.Decifrar(h.opcoes.ChaveCifra, cifrado)
+	segredo, err := DecifrarTOTP(h.opcoes.ChaveCifra, usuarioID, cifrado)
 	if err != nil {
 		return err
 	}
-	passo, ok := passoDoCodigo(string(segredo), codigo, h.agora())
+	passo, ok := passoDoCodigo(segredo, codigo, h.agora())
 	if !ok {
 		return errCodigoRecusado
 	}
@@ -291,7 +291,8 @@ func (h *Handlers) criarUsuarioDoConvite(r *http.Request, cv convite, nome, senh
 	if err != nil {
 		return "", "", t, err
 	}
-	cifrado, err := plataforma.Cifrar(h.opcoes.ChaveCifra, []byte(segredo))
+	usuarioID := plataforma.NovoID("usr")
+	cifrado, err := CifrarTOTP(h.opcoes.ChaveCifra, usuarioID, segredo)
 	if err != nil {
 		return "", "", t, err
 	}
@@ -299,7 +300,6 @@ func (h *Handlers) criarUsuarioDoConvite(r *http.Request, cv convite, nome, senh
 	if err != nil {
 		return "", "", t, err
 	}
-	usuarioID := plataforma.NovoID("usr")
 	err = tenant.EmTenant(ctx, h.pool, cv.tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE convites SET usado_em = now()
 			WHERE id = $1 AND tenant_id = $2 AND usado_em IS NULL AND expira_em > now()`, cv.id, cv.tenantID)

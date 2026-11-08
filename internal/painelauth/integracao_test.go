@@ -75,11 +75,11 @@ func (a *ambiente) semear(t *testing.T, tenantID, email string, papel Papel) usu
 	if err != nil {
 		t.Fatal(err)
 	}
-	cifrado, err := plataforma.Cifrar(chaveCifraTeste, []byte(segredo))
+	id := plataforma.NovoID("usr")
+	cifrado, err := CifrarTOTP(chaveCifraTeste, id, segredo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := plataforma.NovoID("usr")
 	a.exec(`INSERT INTO usuarios (id, email, nome, senha_hash) VALUES ($1, $2, $2, $3)`, id, email, hash)
 	a.exec(`INSERT INTO totp (usuario_id, segredo_cifrado, confirmado_em) VALUES ($1, $2, now())`, id, cifrado)
 	a.exec(`INSERT INTO associacoes (usuario_id, tenant_id, papel) VALUES ($1, $2, $3)`, id, tenantID, string(papel))

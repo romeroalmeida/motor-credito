@@ -6,6 +6,8 @@ import (
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+
+	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
 const (
@@ -14,6 +16,18 @@ const (
 )
 
 var opcoesTOTP = totp.ValidateOpts{Period: periodoTOTP, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+
+// CifrarTOTP guarda o segredo com subchave própria (derivada da mestra) e AAD = usuario_id: a linha copiada para
+// outro usuário não decifra. A semente usa a mesma função.
+func CifrarTOTP(chaveMestra []byte, usuarioID, segredo string) ([]byte, error) {
+	return plataforma.CifrarAAD(plataforma.DerivarChave(chaveMestra, "totp"), []byte(segredo), []byte(usuarioID))
+}
+
+// DecifrarTOTP desfaz CifrarTOTP.
+func DecifrarTOTP(chaveMestra []byte, usuarioID string, cifrado []byte) (string, error) {
+	claro, err := plataforma.DecifrarAAD(plataforma.DerivarChave(chaveMestra, "totp"), cifrado, []byte(usuarioID))
+	return string(claro), err
+}
 
 // novoSegredoTOTP gera o segredo base32 e a URL otpauth:// para o QR code.
 func novoSegredoTOTP(email string) (segredo, url string, err error) {

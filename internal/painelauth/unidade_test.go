@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/pquerna/otp/totp"
+
+	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
 func TestCookieInseguroDuasTravas(t *testing.T) {
@@ -151,5 +153,26 @@ func TestComparacaoDeSegredoEmTempoConstante(t *testing.T) {
 	// senha, código TOTP, CSRF cabeçalho×cookie, CSRF×sessão
 	if usosSeguros < 4 {
 		t.Errorf("esperava ≥ 4 comparações em tempo constante, achei %d", usosSeguros)
+	}
+}
+
+// O segredo TOTP não pode abrir com a chave dos documentos nem ser copiado para outro usuário (achado 11).
+func TestCifraTOTPSubchaveEAAD(t *testing.T) {
+	mestra := make([]byte, 32)
+	c, err := CifrarTOTP(mestra, "usr_A", "JBSWY3DPEHPK3PXP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := DecifrarTOTP(mestra, "usr_A", c); err != nil || s != "JBSWY3DPEHPK3PXP" {
+		t.Fatalf("DecifrarTOTP = %q, %v", s, err)
+	}
+	if _, err := DecifrarTOTP(mestra, "usr_B", c); err == nil {
+		t.Fatal("segredo de usr_A decifrou como usr_B")
+	}
+	if _, err := plataforma.Decifrar(mestra, c); err == nil {
+		t.Fatal("segredo TOTP decifrou com a chave dos documentos")
+	}
+	if _, err := plataforma.DecifrarAAD(mestra, c, []byte("usr_A")); err == nil {
+		t.Fatal("segredo TOTP decifrou com a chave mestra (sem subchave)")
 	}
 }
