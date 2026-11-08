@@ -33,4 +33,5 @@ export const endpoints = {
     ips: '/painel/chaves/ips',
   },
   equipe: '/painel/equipe',
+  simulador: '/painel/simulador/consultas',
 } as const

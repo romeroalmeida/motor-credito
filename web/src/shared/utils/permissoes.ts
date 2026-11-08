@@ -2,7 +2,7 @@ import type { Papel } from '@/shared/types'
 
 // Espelho dos papéis do contrato (api/openapi.yaml): o servidor é quem barra (403);
 // aqui só escondemos o que o papel não pode usar, para a tela não oferecer beco sem saída.
-export type Area = 'visao-geral' | 'consultas' | 'politica' | 'chaves' | 'equipe' | 'auditoria'
+export type Area = 'visao-geral' | 'consultas' | 'politica' | 'chaves' | 'equipe' | 'auditoria' | 'simulador'
 
 const LEITURA: Record<Area, readonly Papel[]> = {
   'visao-geral': ['admin', 'analista'],
@@ -11,6 +11,7 @@ const LEITURA: Record<Area, readonly Papel[]> = {
   chaves: ['admin'],
   equipe: ['admin'],
   auditoria: ['admin', 'auditor'],
+  simulador: ['admin'],
 }
 
 export function podeVer(papel: Papel | null, area: Area): boolean {

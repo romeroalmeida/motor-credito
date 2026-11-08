@@ -58,6 +58,13 @@ export const rotas: RouteObject[] = [
             }),
           },
           {
+            path: 'simulador',
+            ...protegida('simulador', async () => {
+              const { SimuladorPage } = await import('@/features/simulador')
+              return <SimuladorPage />
+            }),
+          },
+          {
             path: 'equipe',
             ...protegida('equipe', async () => {
               const { EquipePage } = await import('@/features/equipe')

@@ -13,7 +13,15 @@ describe('rotas e layout', () => {
     comSessao('admin')
     renderizarApp('/consultas')
     const menu = await screen.findByRole('navigation', { name: 'Menu principal' })
-    const rotulos = ['Visão geral', 'Consultas', 'Política', 'Chaves de API', 'Equipe', 'Auditoria']
+    const rotulos = [
+      'Visão geral',
+      'Consultas',
+      'Política',
+      'Chaves de API',
+      'Simulador de integração',
+      'Equipe',
+      'Auditoria',
+    ]
     for (const rotulo of rotulos) expect(screen.getByRole('link', { name: rotulo })).toBeInTheDocument()
     expect(menu.querySelectorAll('a')).toHaveLength(rotulos.length)
     expect(screen.getByRole('link', { name: 'Consultas' })).toHaveAttribute('aria-current', 'page')
