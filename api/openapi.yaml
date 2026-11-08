@@ -956,12 +956,12 @@ components:
                  pedido.valor, pedido.prazo, fraude.risco, fraude.sinais]
         operador: { type: string, enum: ["==", "!=", "<", "<=", ">", ">=", in] }
         valor:
-          description: Número (centavos para dinheiro), texto, ou lista (com `in`)
+          description: "Número (centavos para dinheiro), texto, ou lista (com `in`). Inteiros entre −(2^53−1) e 2^53−1: fora disso → 422 na regra"
           oneOf:
-            - type: integer
+            - { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
             - type: string
             - type: array
-              items: { oneOf: [{ type: integer }, { type: string }] }
+              items: { oneOf: [{ type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }, { type: string }] }
 
     Corte:
       type: object

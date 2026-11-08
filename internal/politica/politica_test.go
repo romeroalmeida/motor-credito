@@ -482,3 +482,37 @@ func TestErroPolitica_Mensagem(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Achados 3 e 4: o valor de uma condição visual precisa sobreviver ao JSON sem mudar. Acima de 2^53−1 o
+// float64 do JSON já não representa todo inteiro (2^53+1 vira 2^53) e 2^63 virava MinInt64 em amd64.
+func TestValorDaCondicao_InteiroExato(t *testing.T) {
+	const seguro = 1<<53 - 1
+	politicaCom := func(op string, v any) Politica {
+		p := ModeloEmprestimoPF()
+		p.Cortes[0].Condicoes[0] = Condicao{Campo: "score", Operador: op, Valor: v}
+		return p
+	}
+	for _, v := range []any{float64(seguro), float64(-seguro), int64(seguro), seguro, float64(0)} {
+		if _, err := Compilar(politicaCom(">=", v)); err != nil {
+			t.Errorf("recusou %v: %v", v, err)
+		}
+	}
+	recusados := []any{float64(1 << 53), float64(-(1 << 53)), int64(1 << 53), int64(-(1 << 53)), math.Pow(2, 63),
+		-math.Pow(2, 63), math.MaxFloat64, int64(math.MaxInt64)}
+	for _, v := range recusados {
+		if _, err := Compilar(politicaCom(">=", v)); err == nil {
+			t.Errorf("aceitou %v", v)
+		}
+		if _, err := Compilar(politicaCom("in", []any{float64(1), v})); err == nil {
+			t.Errorf("aceitou %v na lista", v)
+		}
+	}
+	// Pelo JSON, como o painel envia: 2^53+1 decodifica como 2^53 e precisa ser recusado.
+	var c Condicao
+	if err := json.Unmarshal([]byte(`{"campo":"score","operador":">=","valor":9007199254740993}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compilar(politicaCom(c.Operador, c.Valor)); err == nil {
+		t.Error("aceitou 2^53+1 vindo do JSON")
+	}
+}
