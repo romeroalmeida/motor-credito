@@ -27,6 +27,9 @@ import (
 // TempoMaximoFontes é o tempo total para bureau + antifraude (desenho §3).
 const TempoMaximoFontes = 2 * time.Second
 
+// scoreMaximo é o topo da escala de score do bureau (0..1000, OpenAPI).
+const scoreMaximo = 1000
+
 // Servico decide e consulta decisões.
 type Servico struct {
 	pool       *pgxpool.Pool
@@ -83,6 +86,10 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 	if b.Situacao == bureau.Falecido {
 		return documentoInvalido(av)
 	}
+	if b.Score < 0 || b.Score > scoreMaximo { // resposta corrompida: não decide com ela
+		slog.WarnContext(ctx, "bureau devolveu score fora da faixa", "documento", documento.Mascarar(doc), "score", b.Score)
+		return negar(av, MotivoBureauIndisponivel, "Bureau de crédito indisponível; tente novamente")
+	}
 	score := b.Score
 	av.reg.Score = &score
 
@@ -117,7 +124,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 }
 
 // contexto monta o que as regras enxergam. Renda: a informada vale sobre a do bureau.
-// Idade: o nascimento do bureau vale sobre o informado (o cliente pode errar ou mentir).
+// Idade: o nascimento válido do bureau vale sobre o informado (o cliente pode errar ou mentir).
 func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Resultado) politica.Contexto {
 	c := politica.Contexto{
 		Score: b.Score, Restricoes: b.Restricoes, Protestos: b.Protestos, DividaTotal: b.DividaTotal,
@@ -127,11 +134,12 @@ func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Res
 	if c.Renda == nil {
 		c.Renda = b.Renda
 	}
-	nascimento := b.Nascimento
-	if nascimento == "" {
-		nascimento = req.Dados.Nascimento
+	// Bureau ausente ou inválido (formato, data impossível, futuro) cai para o informado; o válido sempre vale.
+	idade, ok := idadeEm(b.Nascimento, s.agora())
+	if !ok {
+		idade, ok = idadeEm(req.Dados.Nascimento, s.agora())
 	}
-	if idade, ok := idadeEm(nascimento, s.agora()); ok {
+	if ok {
 		c.Idade = &idade
 	}
 	return c
