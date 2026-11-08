@@ -53,6 +53,7 @@ export const SINAIS: Sinal[] = [
   'ip_estrangeiro',
   'ip_datacenter',
   'dispositivo_multiplos_cpfs',
+  'cnpj_recente',
 ]
 
 export function operadoresDo(campo: NomeCampo): Operador[] {

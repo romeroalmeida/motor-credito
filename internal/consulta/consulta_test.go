@@ -269,3 +269,11 @@ func TestScoreForaDaFaixa(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestCNPJInexistenteViraDocumentoInvalido(t *testing.T) {
+	s := servicoTeste(bureauFixo{bureau.Resultado{Situacao: bureau.Inexistente}}, contadorFake{})
+	av := s.avaliar(context.Background(), req("00000000000191", 100_000), fonteFixa(compilar(t, politica.ModeloEmprestimoPF())))
+	if av.reg.Status != StatusDocumentoInvalido {
+		t.Fatalf("status = %q, quer %q", av.reg.Status, StatusDocumentoInvalido)
+	}
+}

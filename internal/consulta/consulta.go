@@ -83,7 +83,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 		slog.WarnContext(ctx, "bureau falhou", "documento", documento.Mascarar(doc), "erro", err)
 		return negar(av, MotivoBureauIndisponivel, "Bureau de crédito indisponível; tente novamente")
 	}
-	if b.Situacao == bureau.Falecido {
+	if b.Situacao == bureau.Falecido || b.Situacao == bureau.Inexistente {
 		return documentoInvalido(av)
 	}
 	if b.Score < 0 || b.Score > scoreMaximo { // resposta corrompida: não decide com ela
@@ -96,7 +96,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 	docHash := plataforma.HashDoc(s.chaveHMAC, doc)
 	af, err := antifraude.Avaliar(ctxFontes, antifraude.Entrada{
 		DocHash: docHash, Tipo: string(tipo), Nome: req.Dados.Nome, Nascimento: req.Dados.Nascimento,
-		Email: req.Dados.Email, IP: req.Dados.IP, DeviceID: req.Dados.DeviceID, Bureau: b,
+		Email: req.Dados.Email, IP: req.Dados.IP, DeviceID: req.Dados.DeviceID, Bureau: b, Referencia: s.agora(),
 	}, s.contador)
 	if err != nil {
 		slog.WarnContext(ctx, "antifraude falhou", "documento", documento.Mascarar(doc), "erro", err)

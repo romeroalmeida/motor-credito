@@ -1491,6 +1491,7 @@ export interface components {
         | 'ip_estrangeiro'
         | 'ip_datacenter'
         | 'dispositivo_multiplos_cpfs'
+        | 'cnpj_recente'
       )[]
       checagens_executadas: components['schemas']['Checagem'][]
       checagens_puladas: components['schemas']['Checagem'][]

@@ -12,6 +12,7 @@ export const ROTULO_SINAL: Record<Sinal, string> = {
   ip_estrangeiro: 'IP estrangeiro',
   ip_datacenter: 'IP de datacenter',
   dispositivo_multiplos_cpfs: 'Dispositivo em vários documentos',
+  cnpj_recente: 'CNPJ aberto há menos de 180 dias',
 }
 
 /** Visão geral devolve o sinal como texto livre: sinal desconhecido aparece cru, sem quebrar a tela. */
