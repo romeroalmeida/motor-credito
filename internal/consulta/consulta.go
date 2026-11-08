@@ -221,7 +221,8 @@ func (s *Servico) linha(av avaliacao, req Requisicao) (repositorio.NovaConsulta,
 	}
 	if av.doc != "" {
 		n.DocHash = plataforma.HashDoc(s.chaveHMAC, av.doc)
-		if n.DocCifrado, err = plataforma.Cifrar(s.chaveCifra, []byte(av.doc)); err != nil {
+		// AAD = id da consulta: o cifrado copiado para outra linha não decifra (nem vira o documento de outra pessoa).
+		if n.DocCifrado, err = plataforma.CifrarAAD(s.chaveCifra, []byte(av.doc), []byte(av.reg.ID)); err != nil {
 			return repositorio.NovaConsulta{}, fmt.Errorf("cifrar documento: %w", err)
 		}
 		tipo := string(av.tipo)

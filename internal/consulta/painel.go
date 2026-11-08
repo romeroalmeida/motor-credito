@@ -31,7 +31,7 @@ func (s *Servico) Listar(ctx context.Context, tenantID string, f repositorio.Fil
 			return nil, nil, fmt.Errorf("ler decisão %s: %w", l.ID, err)
 		}
 		itens = append(itens, Resumo{
-			ID: l.ID, DocumentoMascarado: s.mascarar(ctx, l.DocCifrado), TipoDocumento: l.DocTipo, Status: l.Status,
+			ID: l.ID, DocumentoMascarado: s.mascarar(ctx, l.ID, l.DocCifrado), TipoDocumento: l.DocTipo, Status: l.Status,
 			Score: l.Score, FaixaRisco: l.FaixaRisco, Pedido: reg.Pedido, Oferta: reg.Oferta,
 			AntifraudeRisco: l.AntifraudeRisco, PoliticaVersao: l.PoliticaVersao, CriadoEm: l.CriadoEm,
 		})
@@ -57,19 +57,20 @@ func (s *Servico) Detalhe(ctx context.Context, tenantID, id string) (Detalhe, er
 		ent.DadosInformados = []string{}
 	}
 	return Detalhe{
-		Resposta: reg.Resposta, DocumentoMascarado: s.mascarar(ctx, l.DocCifrado), TipoDocumento: l.DocTipo,
+		Resposta: reg.Resposta, DocumentoMascarado: s.mascarar(ctx, l.ID, l.DocCifrado), TipoDocumento: l.DocTipo,
 		Finalidade: l.Finalidade, BaseLegal: l.BaseLegal, DadosInformados: ent.DadosInformados, Trilha: reg.Trilha,
 	}, nil
 }
 
-// mascarar decifra só para mascarar; documento inválido (não guardado) ou ilegível vira "***".
-func (s *Servico) mascarar(ctx context.Context, cifrado []byte) string {
+// mascarar decifra (AAD = id da consulta) só para mascarar. Documento inválido ou apagado pela retenção (nil),
+// cifrado de outra linha, adulterado ou gravado antes da AAD (pilha local antiga) viram "***".
+func (s *Servico) mascarar(ctx context.Context, id string, cifrado []byte) string {
 	if cifrado == nil {
 		return "***"
 	}
-	claro, err := plataforma.Decifrar(s.chaveCifra, cifrado)
+	claro, err := plataforma.DecifrarAAD(s.chaveCifra, cifrado, []byte(id))
 	if err != nil {
-		slog.ErrorContext(ctx, "decifrar documento", "erro", err)
+		slog.ErrorContext(ctx, "decifrar documento", "consulta", id, "erro", err)
 		return "***"
 	}
 	return documento.Mascarar(string(claro))

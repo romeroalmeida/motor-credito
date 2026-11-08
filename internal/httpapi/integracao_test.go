@@ -221,9 +221,40 @@ func (a *ambiente) testarConsultas(t *testing.T) {
 		if strings.Contains(linha, bureau.CPFScoreAlto) || strings.Contains(linha, "Fulano") || strings.Contains(linha, "fulano@") {
 			t.Fatalf("PII em claro na linha: %s", linha)
 		}
-		claro, err := plataforma.Decifrar(chaveCifra, cifrado)
+		claro, err := plataforma.DecifrarAAD(chaveCifra, cifrado, []byte(r.ID))
 		if err != nil || string(claro) != bureau.CPFScoreAlto || !bytes.Equal(docHash, plataforma.HashDoc(chaveHMAC, bureau.CPFScoreAlto)) || versao != 1 {
 			t.Fatalf("doc cifrado/hash/versão errados: %q %v %d", claro, err, versao)
+		}
+	})
+
+	t.Run("cifrado trocado entre consultas não decifra", func(t *testing.T) {
+		r1 := decodificar[consulta.Resposta](t, a.api(corpoConsulta(bureau.CPFScoreAlto, 100_000), "", true), http.StatusOK)
+		r2 := decodificar[consulta.Resposta](t, a.api(corpoConsulta(bureau.CPFScoreBaixo, 100_000), "", true), http.StatusOK)
+		mascara := func(id string) string {
+			return decodificar[consulta.Detalhe](t, a.painel(a.sessA, http.MethodGet, "/painel/consultas/"+id, ""), http.StatusOK).DocumentoMascarado
+		}
+		if m := mascara(r1.ID); m == "***" {
+			t.Fatalf("antes da troca já não decifra: %q", m)
+		}
+		a.dono(`UPDATE consultas c SET doc_cifrado = o.doc_cifrado FROM consultas o
+			WHERE (c.id, o.id) IN (($1, $2), ($2, $1))`, r1.ID, r2.ID)
+		for _, id := range []string{r1.ID, r2.ID} {
+			if m := mascara(id); m != "***" {
+				t.Fatalf("consulta %s decifrou o documento de outra linha: %q", id, m)
+			}
+		}
+		// Linha antiga (cifrada sem AAD) não derruba o painel: mostra "***".
+		semAAD, err := plataforma.Cifrar(chaveCifra, []byte(bureau.CPFScoreAlto))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.dono(`UPDATE consultas SET doc_cifrado = $2 WHERE id = $1`, r1.ID, semAAD)
+		if m := mascara(r1.ID); m != "***" {
+			t.Fatalf("cifrado sem AAD: %q", m)
+		}
+		lista := a.painel(a.sessA, http.MethodGet, "/painel/consultas", "")
+		if lista.Code != http.StatusOK {
+			t.Fatalf("lista com linha ilegível: %d %s", lista.Code, lista.Body.String())
 		}
 	})
 
