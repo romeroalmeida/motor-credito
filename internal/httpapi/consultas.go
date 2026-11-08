@@ -59,7 +59,7 @@ func (h handlers) criarConsulta(w http.ResponseWriter, r *http.Request) {
 		if achou {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(guardada)
+			_, _ = w.Write(guardada) // #nosec G705 -- JSON gravado pelo próprio servidor, servido como application/json
 			return
 		}
 	}

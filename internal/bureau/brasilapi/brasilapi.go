@@ -123,7 +123,7 @@ func centavos(n json.Number) (int64, error) {
 	if err1 != nil || err2 != nil || strings.ContainsAny(s, "eE+-") || r > (1<<63-1-99)/100 {
 		return 0, fmt.Errorf("valor %q fora do formato", s)
 	}
-	return int64(r*100 + c), nil
+	return int64(r*100 + c), nil // #nosec G115 -- r ≤ (MaxInt64-99)/100 e c ≤ 99 (frac tem 2 dígitos), checado acima
 }
 
 // situacoes: descricao_situacao_cadastral da Receita. Fora daqui vira indisponível (não decidimos no escuro).

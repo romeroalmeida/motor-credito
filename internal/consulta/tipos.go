@@ -29,7 +29,7 @@ const (
 // Finalidade e base legal (LGPD) aceitas na v1.
 const (
 	FinalidadeConcessao = "concessao_credito"
-	BaseLegalCredito    = "protecao_credito_art7_x"
+	BaseLegalCredito    = "protecao_credito_art7_x" // #nosec G101 -- base legal da LGPD, não é credencial
 )
 
 const (

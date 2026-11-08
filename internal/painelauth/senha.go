@@ -61,10 +61,10 @@ func conferirSenha(senha, phc string) bool {
 	}
 	sal, err1 := b64.DecodeString(partes[4])
 	guardado, err2 := b64.DecodeString(partes[5])
-	if err1 != nil || err2 != nil || len(guardado) == 0 {
+	if err1 != nil || err2 != nil || len(guardado) == 0 || len(guardado) > 128 {
 		return false
 	}
-	calculado := idKey([]byte(senha), sal, t, m, p, uint32(len(guardado)))
+	calculado := idKey([]byte(senha), sal, t, m, p, uint32(len(guardado))) // #nosec G115 -- 1..128, checado acima
 	return subtle.ConstantTimeCompare(calculado, guardado) == 1
 }
 

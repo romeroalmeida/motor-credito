@@ -17,7 +17,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # stable + check-latest: pega o patch mais novo (correções da stdlib); go.mod fixa só o mínimo
+          go-version: stable
+          check-latest: true
       - name: go vet
         run: go vet ./...
       - name: gofmt

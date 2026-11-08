@@ -180,6 +180,7 @@ func (h *Handlers) apagarCookies(w http.ResponseWriter) {
 
 // cookie: o csrf não é httpOnly porque o JS do painel precisa lê-lo para o cabeçalho X-CSRF.
 func (h *Handlers) cookie(w http.ResponseWriter, nome, valor string, maxAge int, httpOnly bool) {
+	// #nosec G124 -- Secure só desliga com COOKIE_INSEGURO_DEV=on E ambiente ≠ produção (duas travas, testadas)
 	http.SetCookie(w, &http.Cookie{
 		Name: nome, Value: valor, Path: "/", MaxAge: maxAge,
 		HttpOnly: httpOnly, Secure: !h.opcoes.CookieInseguro, SameSite: http.SameSiteStrictMode,

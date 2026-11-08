@@ -55,7 +55,7 @@ e o contrato em [`api/openapi.yaml`](api/openapi.yaml).
 
 ## Como rodar
 
-Pré-requisitos: Docker, Go 1.25 e Node 24 (para o painel em modo dev e o e2e).
+Pré-requisitos: Docker, Go 1.26+ e Node 24 (para o painel em modo dev e o e2e).
 
 ```bash
 cp .env.example .env        # preencha as senhas e gere as chaves com: openssl rand -hex 32
