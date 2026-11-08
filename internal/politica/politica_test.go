@@ -483,6 +483,36 @@ func TestErroPolitica_Mensagem(t *testing.T) {
 	}
 }
 
+// Teste fraco 6: renda×múltiplo que estouraria int64 vale o limite fixo, nos dois lados do limite exato.
+func TestLimiteDaFaixa_RendaQueEstoura(t *testing.T) {
+	f := Faixa{LimiteFixo: 3_000_000, MultiploRenda: 80}
+	for _, renda := range []int64{math.MaxInt64 / 80, math.MaxInt64/80 + 1, math.MaxInt64 / 2, math.MaxInt64} {
+		if got := limiteDaFaixa(f, &renda); got != f.LimiteFixo {
+			t.Errorf("renda %d: limite %d, quer %d", renda, got, f.LimiteFixo)
+		}
+	}
+	d := avaliar(t, compilar(t, ModeloEmprestimoPF()),
+		Contexto{Score: 920, Renda: ptr[int64](math.MaxInt64 / 2), PedidoValor: 3_000_000, PedidoPrazo: 12})
+	if d.Status != Aprovado || d.Oferta.Valor != 3_000_000 {
+		t.Fatalf("renda enorme: %s %+v %v", d.Status, d.Oferta, d.Motivos)
+	}
+}
+
+// Teste fraco 7: teto do múltiplo de renda no limite exato (1000 compila, 1001 não).
+func TestMultiploRenda_Teto(t *testing.T) {
+	p := ModeloEmprestimoPF()
+	p.Faixas[1].MultiploRenda = maxMultiploRenda
+	if _, err := Compilar(p); err != nil {
+		t.Fatalf("recusou o teto: %v", err)
+	}
+	p.Faixas[1].MultiploRenda = maxMultiploRenda + 1
+	var ep *ErroPolitica
+	if _, err := Compilar(p); !errors.As(err, &ep) || ep.Problemas[0].Regra != "faixas[1]" ||
+		!strings.Contains(ep.Problemas[0].Motivo, "múltiplo de renda acima") {
+		t.Fatalf("aceitou múltiplo acima do teto: %v", err)
+	}
+}
+
 // Achados 3 e 4: o valor de uma condição visual precisa sobreviver ao JSON sem mudar. Acima de 2^53−1 o
 // float64 do JSON já não representa todo inteiro (2^53+1 vira 2^53) e 2^63 virava MinInt64 em amd64.
 func TestValorDaCondicao_InteiroExato(t *testing.T) {
