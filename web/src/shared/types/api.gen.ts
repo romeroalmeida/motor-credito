@@ -67,6 +67,7 @@ export interface paths {
           /** @description Segundos Unix */
           'X-Timestamp': components['parameters']['XTimestamp']
           'X-Assinatura': components['parameters']['XAssinatura']
+          /** @description Reenvio com a mesma chave e o mesmo corpo devolve a decisão já gravada, sem nova consulta ao bureau. Mesma chave com outro corpo → 409 conflito_idempotencia, inclusive quando as duas requisições chegam ao mesmo tempo (a segunda espera a primeira terminar). */
           'Idempotency-Key'?: components['parameters']['IdempotencyKey']
         }
         path?: never
@@ -1417,7 +1418,7 @@ export interface components {
     Pedido: {
       /**
        * Format: int64
-       * @description Centavos
+       * @description Centavos (teto 1e13 = R$ 100 bilhões; acima → 400 em pedido.valor)
        */
       valor: number
       /** @description Meses */
@@ -1585,7 +1586,7 @@ export interface components {
         | 'fraude.sinais'
       /** @enum {string} */
       operador: '==' | '!=' | '<' | '<=' | '>' | '>=' | 'in'
-      /** @description Número (centavos para dinheiro), texto, ou lista (com `in`) */
+      /** @description Número (centavos para dinheiro), texto, ou lista (com `in`). Inteiros entre −(2^53−1) e 2^53−1: fora disso → 422 na regra */
       valor: number | string | (number | string)[]
     }
     Corte: {
@@ -1607,10 +1608,11 @@ export interface components {
       condicoes?: components['schemas']['Condicao'][]
       cel?: string
       nega: boolean
+      /** @description Pontos-base ao mês (teto 100000; acima → 422, regra faixas[i]) */
       taxa_bps: number
       /**
        * Format: int64
-       * @description Centavos
+       * @description Centavos (teto 1e13; acima → 422 na publicação, regra faixas[i])
        */
       limite_fixo: number
       /** @description 30 = 3,0× renda */
@@ -1620,6 +1622,7 @@ export interface components {
       ativa: boolean
       /** @description 0 = mantém o prazo pedido */
       prazo_maximo: number
+      /** @description Teto 100000; acima → 422, regra contraproposta */
       acrescimo_taxa_bps: number
     }
     Politica: {
@@ -1873,6 +1876,7 @@ export interface components {
     /** @description Segundos Unix */
     XTimestamp: string
     XAssinatura: string
+    /** @description Reenvio com a mesma chave e o mesmo corpo devolve a decisão já gravada, sem nova consulta ao bureau. Mesma chave com outro corpo → 409 conflito_idempotencia, inclusive quando as duas requisições chegam ao mesmo tempo (a segunda espera a primeira terminar). */
     IdempotencyKey: string
     /** @description Igual ao cookie csrf */
     XCSRF: string
