@@ -1,6 +1,6 @@
 import { CircleCheck, CircleMinus } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { Etiqueta } from '@/shared/components/Etiqueta'
+import { Etiqueta, type Tom } from '@/shared/components/Etiqueta'
 import { StatusDecisao } from '@/shared/components/StatusDecisao'
 import { cn } from '@/shared/lib/utils'
 import type { Schemas } from '@/shared/types'
@@ -166,6 +166,91 @@ export function ResumoAntifraude({ antifraude }: { antifraude: Antifraude | null
           <dd>{antifraude.checagens_puladas.map((c) => ROTULO_CHECAGEM[c]).join(', ') || '—'}</dd>
         </div>
       </dl>
+    </div>
+  )
+}
+
+type Fontes = Schemas['Fontes']
+
+/** Selo de cada fonte: o texto diz se o dado é real ou simulado; a cor só reforça. */
+const SELO_CADASTRO: Record<Fontes['cadastro'], { texto: string; tom: Tom }> = {
+  serpro: { texto: 'Real · Serpro', tom: 'aprovado' },
+  'serpro-trial': { texto: 'Real · Serpro (ambiente de testes)', tom: 'aprovado' },
+  brasilapi: { texto: 'Real · BrasilAPI', tom: 'aprovado' },
+  simulado: { texto: 'Simulado', tom: 'neutro' },
+  nao_verificado: { texto: 'Não verificado', tom: 'alerta' },
+}
+const SELO_SCORE: Record<Fontes['score'], { texto: string; tom: Tom }> = {
+  cadastral: { texto: 'Cadastral (dados públicos)', tom: 'aprovado' },
+  simulado: { texto: 'Simulado', tom: 'neutro' },
+}
+const SELO_RESTRICOES: Record<Fontes['restricoes'], { texto: string; tom: Tom }> = {
+  simulado: { texto: 'Simulado', tom: 'neutro' },
+}
+const ROTULO_SITUACAO: Record<Schemas['Cadastro']['situacao'], string> = {
+  regular: 'Regular',
+  irregular: 'Irregular',
+  inativo: 'Inativa',
+}
+
+/** "1966-08-01" → "01/08/1966" sem passar por Date (que mudaria o dia pelo fuso). */
+const dataCurta = (iso: string) => iso.split('-').reverse().join('/')
+
+interface FontesDadosProps {
+  fontes?: Fontes | null
+  fatores?: Schemas['FatorScore'][] | null
+  cadastro?: Schemas['Cadastro'] | null
+}
+
+export function FontesDados({ fontes, fatores, cadastro }: FontesDadosProps) {
+  if (!fontes) {
+    return <p className="text-sm text-muted-foreground">Nenhuma fonte de dados respondeu nesta decisão.</p>
+  }
+  const selos = [
+    { rotulo: 'Cadastro', ...SELO_CADASTRO[fontes.cadastro] },
+    { rotulo: 'Score', ...SELO_SCORE[fontes.score] },
+    { rotulo: 'Restrições e protestos', ...SELO_RESTRICOES[fontes.restricoes] },
+  ]
+  return (
+    <div className="space-y-4">
+      <dl className="space-y-2 text-sm">
+        {selos.map((selo) => (
+          <div key={selo.rotulo} className="flex flex-wrap items-center justify-between gap-2">
+            <dt className="text-muted-foreground">{selo.rotulo}</dt>
+            <dd>
+              <Etiqueta tom={selo.tom}>{selo.texto}</Etiqueta>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {fontes.cadastro === 'nao_verificado' && (
+        <p className="text-xs text-muted-foreground">
+          O Serpro exige o nascimento: sem ele a situação do CPF não foi consultada nem pontuada.
+        </p>
+      )}
+      {cadastro && (
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <Dado rotulo="Situação cadastral">{ROTULO_SITUACAO[cadastro.situacao]}</Dado>
+          {cadastro.razao_social && <Dado rotulo="Razão social">{cadastro.razao_social}</Dado>}
+          {cadastro.abertura && <Dado rotulo="Abertura">{dataCurta(cadastro.abertura)}</Dado>}
+        </dl>
+      )}
+      {fatores && fatores.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Como o score cadastral foi somado</h3>
+          <ul className="space-y-1" aria-label="Fatores do score cadastral">
+            {fatores.map((fator) => (
+              <li key={fator.codigo} className="flex justify-between gap-3 text-sm">
+                <code className="font-mono text-xs">{fator.codigo}</code>
+                <span className="tabular-nums">
+                  {fator.pontos >= 0 ? '+' : ''}
+                  {fator.pontos}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

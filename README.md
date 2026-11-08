@@ -24,7 +24,7 @@ bureau simulado por um real não mexe no motor.
  │     │                                                                                        │
  │     ▼                                                                                        │
  │  consulta ──► documento (dígito) ──► bureau ──► antifraude ──► politica (CEL) ──► dinheiro   │
- │     │                                 │  simulado + BrasilAPI (CNPJ)            (Price)      │
+ │     │                                 │  simulado + Serpro (CPF) + BrasilAPI    (Price)      │
  │     ▼                                                                                        │
  │  repositorio + auditoria (mesma transação, hash encadeado)                                   │
  └────────────────────────────────────────────┬─────────────────────────────────────────────────┘
@@ -124,15 +124,42 @@ make e2e       # Playwright contra a pilha do compose: entra com TOTP, publica u
 - **IP real** atrás do nginx só a partir de `PROXIES_CONFIAVEIS`.
 - CI com `govulncheck`, `gosec`, `npm audit` e `gitleaks`.
 
+## De onde vêm os dados
+
+Cada resposta diz a origem de cada parte em `fontes` (e o painel mostra um selo com texto por fonte):
+
+| Parte | CPF | CNPJ |
+|---|---|---|
+| Cadastro (situação) | **Real** com `BUREAU_CPF=serpro-trial`/`serpro` (Receita via Serpro; exige `dados.nascimento`, senão `nao_verificado`); simulado por padrão | **Real** com `BUREAU_CNPJ=brasilapi` (Receita via BrasilAPI; padrão do compose); simulado no código |
+| Score | Simulado | **Cadastral** com `brasilapi`: 0–1000 a partir de dados públicos, com cada fator em `score_fatores` (tabela em `internal/bureau/README.md`); simulado sem ela |
+| Restrições, protestos, dívida, renda | Simulado | Simulado |
+
+A resposta mostra em `cadastro` só a situação para CPF — nome e nascimento vindos da fonte são dado pessoal e
+nunca saem (servem só ao antifraude e ao corte de idade). Para CNPJ mostra também razão social e abertura.
+
+**Ligar o Serpro trial** (CPFs fictícios do Serpro, cota mínima — por isso o padrão é `simulado`):
+
+```sh
+export BUREAU_CPF=serpro-trial BUREAU_CNPJ=brasilapi
+docker compose up -d --build api
+# depois consulte, por exemplo, o CPF 404.428.201-35 com "dados": {"nascimento": "1970-11-14"}
+```
+
+URL e chave do trial são públicas e entram como padrão só nesse modo. Produção: `BUREAU_CPF=serpro` com
+`SERPRO_URL` e `SERPRO_CHAVE` (sem as duas, a API não sobe). Valor desconhecido em `BUREAU_CPF`/`BUREAU_CNPJ`
+também impede subir. Os CPFs de teste do Serpro estão em `internal/bureau/README.md`.
+
 ## Limitações (honestas)
 
-- **O bureau é simulado.** Score, restrições, protestos, dívida e renda são determinísticos, derivados do documento.
-  Não existe score de crédito gratuito.
-- **O CPF é sempre simulado.** Não há fonte pública de CPF, e nenhum CPF sai para a rede.
-- **O CNPJ real vem da BrasilAPI, que não tem SLA.** Ela traz só o cadastro público da Receita (razão social,
-  situação, abertura). Se estiver fora do ar ou limitando (429), toda consulta de CNPJ é negada com
-  `BUREAU_INDISPONIVEL`. CNPJ alfanumérico ainda não é aceito por ela. No código o padrão de `BUREAU_CNPJ` é `simulado` (sem rede); o
-  `docker compose` de demonstração liga `brasilapi` mesmo com a variável vazia. Para desligar, `BUREAU_CNPJ=simulado`.
+- **Restrições, protestos, dívida e renda são simulados.** Determinísticos, derivados do documento. Não existe
+  fonte gratuita disso, nem score de crédito comportamental gratuito (ver "De onde vêm os dados").
+- **O Serpro de verdade é pago.** O modo `serpro-trial` usa o ambiente de testes público: só CPFs fictícios e
+  cota mínima (estourada = `BUREAU_INDISPONIVEL`). Produção (`BUREAU_CPF=serpro`) pede contrato com o Serpro.
+- **O CNPJ real vem da BrasilAPI, que não tem SLA.** Fora do ar ou limitando (429), toda consulta de CNPJ é negada
+  com `BUREAU_INDISPONIVEL`. CNPJ alfanumérico ainda não é aceito por ela. No código o padrão de `BUREAU_CNPJ` é
+  `simulado` (sem rede); o `docker compose` de demonstração liga `brasilapi` mesmo com a variável vazia.
+- **O score cadastral de CNPJ mede robustez de cadastro, não comportamento de pagamento.** É explicável e
+  determinístico, mas não substitui um bureau.
 - A velocidade entre clientes sai do Postgres (sem Redis). Compartilhar esse sinal entre clientes precisaria estar
   em contrato antes de virar produto.
 - Virar produto pode exigir contrato com bureaus e, conforme o modelo, autorização do Bacen.

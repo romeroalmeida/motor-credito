@@ -117,6 +117,33 @@ function trilhaPara(resumo: Resumo): Schemas['RegraAvaliada'][] {
   return trilha
 }
 
+/** Fatores do score cadastral de um CNPJ de exemplo (mesma tabela do internal/bureau). */
+const FATORES_EXEMPLO: Schemas['FatorScore'][] = [
+  { codigo: 'SITUACAO_ATIVA', pontos: 250 },
+  { codigo: 'TEMPO_EMPRESA_5A_MAIS', pontos: 200 },
+  { codigo: 'CAPITAL_100MIL_1MI', pontos: 100 },
+  { codigo: 'PORTE_PEQUENO', pontos: 70 },
+  { codigo: 'REGIME_SIMPLES', pontos: 50 },
+  { codigo: 'NATUREZA_LIMITADA', pontos: 100 },
+  { codigo: 'SOCIOS_2_MAIS', pontos: 50 },
+]
+
+// CNPJ: cadastro e score reais pela BrasilAPI; o primeiro CPF pelo trial do Serpro; o resto simulado.
+function fontesPara(resumo: Resumo, i: number): Pick<Detalhe, 'fontes' | 'score_fatores' | 'cadastro'> {
+  if (resumo.status === 'documento_invalido') return { fontes: null, score_fatores: null, cadastro: null }
+  if (resumo.tipo_documento === 'cnpj')
+    return {
+      fontes: { cadastro: 'brasilapi', score: 'cadastral', restricoes: 'simulado' },
+      score_fatores: FATORES_EXEMPLO,
+      cadastro: { situacao: 'regular', razao_social: 'PADARIA EXEMPLO LTDA', abertura: '2012-03-15' },
+    }
+  return {
+    fontes: { cadastro: i === 0 ? 'serpro-trial' : 'simulado', score: 'simulado', restricoes: 'simulado' },
+    score_fatores: null,
+    cadastro: { situacao: 'regular' },
+  }
+}
+
 function montarDetalhe(resumo: Resumo, i: number): Detalhe {
   const invalido = resumo.status === 'documento_invalido'
   const comEmail = i % 3 !== 0
@@ -150,6 +177,7 @@ function montarDetalhe(resumo: Resumo, i: number): Detalhe {
     base_legal: 'Proteção do crédito (LGPD, art. 7º, X)',
     dados_informados: comEmail ? ['renda', 'email', 'ip'] : [],
     trilha: trilhaPara(resumo),
+    ...fontesPara(resumo, i),
   }
 }
 

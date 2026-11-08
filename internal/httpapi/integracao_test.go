@@ -314,6 +314,10 @@ func (a *ambiente) testarIsolamento(t *testing.T) {
 		strings.Join(d.DadosInformados, ",") != "nome,email" {
 		t.Fatalf("detalhe = %+v", d)
 	}
+	// As fontes gravadas no jsonb da decisão voltam no detalhe do painel.
+	if d.Fontes == nil || d.Fontes.Cadastro != bureau.FonteSimulado || d.Cadastro == nil || d.Cadastro.Situacao != "regular" {
+		t.Fatalf("fontes %+v cadastro %+v", d.Fontes, d.Cadastro)
+	}
 	if w := a.painel(a.sessB, http.MethodGet, "/painel/consultas/"+r.ID, ""); w.Code != http.StatusNotFound {
 		t.Fatalf("B leu consulta de A: %d %s", w.Code, w.Body.String())
 	}

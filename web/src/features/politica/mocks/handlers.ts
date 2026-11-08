@@ -112,6 +112,27 @@ const politicaInvalida = (detalhes: Detalhe[]) =>
 
 // ------------------------------------------------------------ simulação do motor para "testar"
 
+// CNPJ (14 caracteres) como se BUREAU_CNPJ=brasilapi; CPF simulado. O score do mock não é o cadastral de verdade.
+function fontesDoTeste(
+  documento: string,
+): Pick<Schemas['ResultadoTeste'], 'fontes' | 'score_fatores' | 'cadastro'> {
+  if (documento.replace(/[^0-9A-Za-z]/g, '').length === 14)
+    return {
+      fontes: { cadastro: 'brasilapi', score: 'cadastral', restricoes: 'simulado' },
+      score_fatores: [
+        { codigo: 'SITUACAO_ATIVA', pontos: 250 },
+        { codigo: 'TEMPO_EMPRESA_5A_MAIS', pontos: 200 },
+        { codigo: 'REGIME_SIMPLES', pontos: 50 },
+      ],
+      cadastro: { situacao: 'regular', razao_social: 'PADARIA EXEMPLO LTDA', abertura: '2012-03-15' },
+    }
+  return {
+    fontes: { cadastro: 'simulado', score: 'simulado', restricoes: 'simulado' },
+    score_fatores: null,
+    cadastro: { situacao: 'regular' },
+  }
+}
+
 type Contexto = Record<Condicao['campo'], number | string[] | undefined>
 
 function contextoDoDocumento(documento: string, pedido: Schemas['Pedido'], renda?: number): Contexto {
@@ -319,7 +340,7 @@ export const handlers: HttpHandler[] = [
     const detalhes = compilar(politica)
     if (detalhes.length > 0) return politicaInvalida(detalhes)
     const ctx = contextoDoDocumento(corpo.documento, corpo.pedido, corpo.dados?.renda)
-    return HttpResponse.json(simular(politica, ctx, corpo.pedido))
+    return HttpResponse.json({ ...simular(politica, ctx, corpo.pedido), ...fontesDoTeste(corpo.documento) })
   }),
 
   http.post('*/painel/politicas/publicar', async ({ request }) => {

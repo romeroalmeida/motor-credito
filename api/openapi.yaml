@@ -873,7 +873,7 @@ components:
       description: Cada dado enviado liga mais checagens antifraude
       properties:
         nome: { type: string, maxLength: 200 }
-        nascimento: { type: string, format: date }
+        nascimento: { type: string, format: date, description: "Com BUREAU_CPF=serpro/serpro-trial é o que permite consultar o CPF na Receita; sem ele, fontes.cadastro = nao_verificado" }
         renda: { type: integer, format: int64, minimum: 0, description: Centavos/mês }
         email: { type: string, format: email }
         telefone: { type: string, maxLength: 30 }
@@ -958,6 +958,53 @@ components:
             - $ref: "#/components/schemas/PoliticaRef"
             - type: "null"
         criado_em: { type: string, format: date-time }
+        fontes:
+          oneOf:
+            - $ref: "#/components/schemas/Fontes"
+            - type: "null"
+        score_fatores:
+          description: Parcelas do score cadastral (só quando fontes.score = cadastral; senão null)
+          oneOf:
+            - type: array
+              items: { $ref: "#/components/schemas/FatorScore" }
+            - type: "null"
+        cadastro:
+          oneOf:
+            - $ref: "#/components/schemas/Cadastro"
+            - type: "null"
+
+    Fontes:
+      type: object
+      description: |
+        De onde veio cada parte da decisão. null quando o bureau não respondeu ou o documento é inválido.
+        cadastro: serpro / serpro-trial (CPF, Receita via Serpro), brasilapi (CNPJ, Receita via BrasilAPI),
+        simulado, ou nao_verificado (Serpro ligado e consulta de CPF sem dados.nascimento: o Serpro exige o dado,
+        não é chamado e a situação não é inventada nem pontuada). score: cadastral (CNPJ, dados públicos; ver
+        score_fatores) ou simulado. restricoes: sempre simulado (não há fonte gratuita de restrições e protestos).
+      required: [cadastro, score, restricoes]
+      properties:
+        cadastro: { type: string, enum: [serpro, serpro-trial, brasilapi, simulado, nao_verificado] }
+        score: { type: string, enum: [cadastral, simulado] }
+        restricoes: { type: string, enum: [simulado] }
+
+    FatorScore:
+      type: object
+      required: [codigo, pontos]
+      properties:
+        codigo: { type: string, examples: [SITUACAO_ATIVA, TEMPO_EMPRESA_5A_MAIS, CAPITAL_1MI_MAIS, REGIME_MEI] }
+        pontos: { type: integer, examples: [250, 200] }
+
+    Cadastro:
+      type: object
+      description: |
+        Situação cadastral na fonte. Para CPF é só a situação: nome e nascimento da fonte são dado pessoal e nunca
+        são devolvidos. razao_social e abertura só para CNPJ (dado público de empresa). null quando a fonte não
+        trouxe situação (ex.: cadastro nao_verificado).
+      required: [situacao]
+      properties:
+        situacao: { type: string, enum: [regular, irregular, inativo] }
+        razao_social: { type: string, description: Só CNPJ }
+        abertura: { type: string, format: date, description: Só CNPJ (início de atividade) }
 
     RegraAvaliada:
       type: object
@@ -1133,6 +1180,20 @@ components:
             - $ref: "#/components/schemas/Antifraude"
             - type: "null"
         trilha: { type: array, items: { $ref: "#/components/schemas/RegraAvaliada" } }
+        fontes:
+          oneOf:
+            - $ref: "#/components/schemas/Fontes"
+            - type: "null"
+        score_fatores:
+          description: Parcelas do score cadastral (só quando fontes.score = cadastral; senão null)
+          oneOf:
+            - type: array
+              items: { $ref: "#/components/schemas/FatorScore" }
+            - type: "null"
+        cadastro:
+          oneOf:
+            - $ref: "#/components/schemas/Cadastro"
+            - type: "null"
 
     # --- Sessão, chaves e equipe
     ProximoPasso:

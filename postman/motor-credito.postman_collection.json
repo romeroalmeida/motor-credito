@@ -289,7 +289,7 @@
           ]
         },
         {
-          "name": "CNPJ real (Banco do Brasil, BrasilAPI)",
+          "name": "CNPJ real (Banco do Brasil, BrasilAPI + score cadastral)",
           "request": {
             "method": "POST",
             "header": [
@@ -317,7 +317,7 @@
                 }
               }
             },
-            "description": "Cadastro da Receita via BrasilAPI (BUREAU_CNPJ=brasilapi, padrão do compose); score continua simulado. Sem SLA: fora do ar = negado BUREAU_INDISPONIVEL."
+            "description": "Cadastro da Receita via BrasilAPI (BUREAU_CNPJ=brasilapi, padrão do compose). O score passa a ser o cadastral (dados públicos: situação, tempo de empresa, capital, porte, regime, natureza jurídica, nº de sócios), explicado em score_fatores; restrições e protestos seguem simulados (fontes.restricoes = simulado). Sem SLA: BrasilAPI fora do ar = negado BUREAU_INDISPONIVEL. Com BUREAU_CNPJ=simulado, fontes vem toda simulada."
           },
           "event": [
             {
@@ -329,8 +329,76 @@
                   "  pm.response.to.have.status(200);",
                   "  const j = pm.response.json();",
                   "  pm.expect(['aprovado', 'contraproposta', 'negado']).to.include(j.status);",
-                  "  // Com BUREAU_CNPJ=brasilapi o cadastro vem da Receita; BrasilAPI fora do ar nega com BUREAU_INDISPONIVEL (fail-closed).",
-                  "  console.log('CNPJ 00000000000191:', j.status, j.motivos.map((m) => m.codigo).join(','), 'sinais:', j.antifraude && j.antifraude.sinais);",
+                  "  console.log('CNPJ 00000000000191:', j.status, j.motivos.map((m) => m.codigo).join(','), 'fontes:', JSON.stringify(j.fontes));",
+                  "});",
+                  "pm.test('com BrasilAPI: score cadastral explicado e razão social pública', () => {",
+                  "  const j = pm.response.json();",
+                  "  // BrasilAPI fora do ar nega com BUREAU_INDISPONIVEL e fontes null (fail-closed); compose com simulado não tem fatores.",
+                  "  if (!j.fontes || j.fontes.cadastro !== 'brasilapi') return;",
+                  "  pm.expect(j.fontes.score).to.eql('cadastral');",
+                  "  pm.expect(j.fontes.restricoes).to.eql('simulado');",
+                  "  pm.expect(j.score_fatores).to.have.lengthOf(7);",
+                  "  pm.expect(j.score).to.eql(j.score_fatores.reduce((t, f) => t + f.pontos, 0));",
+                  "  pm.expect(j.cadastro.razao_social).to.eql('BANCO DO BRASIL SA');",
+                  "  pm.expect(j.cadastro.abertura).to.eql('1966-08-01');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "CPF real (Serpro trial, com nascimento)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/consultas",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consultas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documento\": \"404.428.201-35\",\n  \"finalidade\": \"concessao_credito\",\n  \"pedido\": {\n    \"valor\": 500000,\n    \"prazo\": 12\n  },\n  \"dados\": {\n    \"nome\": \"Rone Pereira\",\n    \"nascimento\": \"1970-11-14\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "CPF fictício do ambiente de testes do Serpro (regular, nascido em 14/11/1970). O Serpro exige o nascimento. Para ligar: BUREAU_CPF=serpro-trial no shell antes do docker compose up (URL e chave públicas do trial; a cota é mínima, por isso o padrão do compose é simulado). Com BUREAU_CPF=simulado (padrão) quem responde é o simulado, com perfil derivado do documento e fontes.cadastro = simulado. Com o Serpro ligado e a cota estourada (HTTP 429), nega com BUREAU_INDISPONIVEL. A resposta nunca traz nome nem nascimento vindos da fonte: só a situação."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 e fonte declarada', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const j = pm.response.json();",
+                  "  console.log('CPF 40442820135:', j.status, j.motivos.map((m) => m.codigo).join(','), 'fontes:', JSON.stringify(j.fontes));",
+                  "  if (!j.fontes) return; // Serpro sem cota ou fora do ar: BUREAU_INDISPONIVEL (fail-closed)",
+                  "  pm.expect(['serpro-trial', 'serpro', 'simulado']).to.include(j.fontes.cadastro);",
+                  "  pm.expect(j.score_fatores).to.eql(null);",
+                  "});",
+                  "pm.test('CPF não devolve nome nem nascimento da fonte', () => {",
+                  "  const corpo = pm.response.text();",
+                  "  pm.expect(corpo).to.not.include('RONE');",
+                  "  pm.expect(corpo).to.not.include('1970-11-14');",
+                  "  const j = pm.response.json();",
+                  "  if (j.cadastro) pm.expect(Object.keys(j.cadastro)).to.eql(['situacao']);",
+                  "  if (j.fontes && j.fontes.cadastro.startsWith('serpro')) pm.expect(j.cadastro.situacao).to.eql('regular');",
                   "});"
                 ]
               }

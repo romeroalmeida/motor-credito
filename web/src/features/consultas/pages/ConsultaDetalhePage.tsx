@@ -6,6 +6,7 @@ import {
   Cartao,
   ErroCarregar,
   Etiqueta,
+  FontesDados,
   ResumoAntifraude,
   ResumoDecisao,
   TituloCartao,
@@ -112,6 +113,14 @@ function Detalhe({ consulta }: { consulta: ConsultaDetalhe }) {
           </Cartao>
         </div>
         <div className="space-y-6">
+          <Cartao aria-labelledby="titulo-fontes">
+            <TituloCartao id="titulo-fontes">De onde vêm os dados</TituloCartao>
+            <FontesDados
+              fontes={consulta.fontes}
+              fatores={consulta.score_fatores}
+              cadastro={consulta.cadastro}
+            />
+          </Cartao>
           <Cartao aria-labelledby="titulo-antifraude">
             <TituloCartao id="titulo-antifraude">Antifraude</TituloCartao>
             <ResumoAntifraude antifraude={consulta.antifraude} />

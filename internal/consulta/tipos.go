@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/romeroalmeida/motor-credito/internal/bureau"
 	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 	"github.com/romeroalmeida/motor-credito/internal/politica"
 )
@@ -142,6 +143,17 @@ type Resposta struct {
 	Antifraude *Antifraude       `json:"antifraude"`
 	Politica   *PoliticaRef      `json:"politica"`
 	CriadoEm   time.Time         `json:"criado_em"`
+	// De onde vieram os dados; nil quando o bureau não respondeu ou o documento é inválido.
+	Fontes       *bureau.Fontes `json:"fontes"`
+	ScoreFatores []bureau.Fator `json:"score_fatores"` // só com score cadastral
+	Cadastro     *Cadastro      `json:"cadastro"`
+}
+
+// Cadastro é o contrato Cadastro: situação sempre; razão social e abertura só para CNPJ.
+type Cadastro struct {
+	Situacao    string `json:"situacao"`
+	Abertura    string `json:"abertura,omitempty"`
+	RazaoSocial string `json:"razao_social,omitempty"`
 }
 
 // registro é o que vai para consultas.decisao: a resposta mais a trilha de regras.
@@ -152,13 +164,16 @@ type registro struct {
 
 // ResultadoTeste é o contrato ResultadoTeste (teste de política no painel; nada é gravado).
 type ResultadoTeste struct {
-	Status     string                   `json:"status"`
-	Score      *int                     `json:"score"`
-	FaixaRisco *string                  `json:"faixa_risco"`
-	Oferta     *politica.Oferta         `json:"oferta"`
-	Motivos    []politica.Motivo        `json:"motivos"`
-	Antifraude *Antifraude              `json:"antifraude"`
-	Trilha     []politica.RegraAvaliada `json:"trilha"`
+	Status       string                   `json:"status"`
+	Score        *int                     `json:"score"`
+	FaixaRisco   *string                  `json:"faixa_risco"`
+	Oferta       *politica.Oferta         `json:"oferta"`
+	Motivos      []politica.Motivo        `json:"motivos"`
+	Antifraude   *Antifraude              `json:"antifraude"`
+	Trilha       []politica.RegraAvaliada `json:"trilha"`
+	Fontes       *bureau.Fontes           `json:"fontes"`
+	ScoreFatores []bureau.Fator           `json:"score_fatores"`
+	Cadastro     *Cadastro                `json:"cadastro"`
 }
 
 // Resumo é o contrato ConsultaResumo (lista do painel).

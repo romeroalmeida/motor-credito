@@ -92,6 +92,10 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 	}
 	score := b.Score
 	av.reg.Score = &score
+	if b.Fontes.Cadastro != "" {
+		av.reg.Fontes = &b.Fontes
+	}
+	av.reg.ScoreFatores, av.reg.Cadastro = b.ScoreFatores, cadastro(b, tipo)
 
 	docHash := plataforma.HashDoc(s.chaveHMAC, doc)
 	af, err := antifraude.Avaliar(ctxFontes, antifraude.Entrada{
@@ -141,6 +145,19 @@ func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Res
 	}
 	if ok {
 		c.Idade = &idade
+	}
+	return c
+}
+
+// cadastro é o que a resposta mostra do cadastro. CPF: só a situação — nome e nascimento da fonte são dado
+// pessoal e nunca saem. CNPJ: razão social e abertura também (dado público de empresa). Sem situação = nil.
+func cadastro(b bureau.Resultado, tipo documento.Tipo) *Cadastro {
+	if b.Situacao == "" {
+		return nil
+	}
+	c := &Cadastro{Situacao: string(b.Situacao)}
+	if tipo == documento.CNPJ {
+		c.RazaoSocial, c.Abertura = b.Nome, b.Abertura
 	}
 	return c
 }
@@ -266,7 +283,8 @@ func (s *Servico) Simular(ctx context.Context, req Requisicao, c *politica.Compi
 	av := s.avaliar(ctx, req, func(context.Context) (*PoliticaRef, *politica.Compilada, error) { return nil, c, nil })
 	r := av.reg
 	return ResultadoTeste{Status: r.Status, Score: r.Score, FaixaRisco: r.FaixaRisco, Oferta: r.Oferta,
-		Motivos: r.Motivos, Antifraude: r.Antifraude, Trilha: r.Trilha}
+		Motivos: r.Motivos, Antifraude: r.Antifraude, Trilha: r.Trilha,
+		Fontes: r.Fontes, ScoreFatores: r.ScoreFatores, Cadastro: r.Cadastro}
 }
 
 // ValidarSimulacao valida o pedido e os dados do teste (a finalidade é fixa).

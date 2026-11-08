@@ -4,6 +4,7 @@ import {
   AvisoErro,
   Campo,
   Cartao,
+  FontesDados,
   ResumoAntifraude,
   ResumoDecisao,
   TituloCartao,
@@ -39,6 +40,7 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
   const [valor, setValor] = useState('10.000,00')
   const [prazo, setPrazo] = useState('24')
   const [renda, setRenda] = useState('')
+  const [nascimento, setNascimento] = useState('')
   const [erros, setErros] = useState<Erros>({})
 
   function enviar(evento: FormEvent) {
@@ -63,7 +65,10 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
       {
         documento,
         pedido: { valor: centavos, prazo: meses },
-        dados: rendaCentavos === null ? undefined : { renda: rendaCentavos },
+        dados:
+          rendaCentavos === null && !nascimento
+            ? undefined
+            : { renda: rendaCentavos ?? undefined, nascimento: nascimento || undefined },
         politica,
       },
       {
@@ -107,14 +112,19 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
             <Input {...props} inputMode="numeric" value={prazo} onChange={(e) => setPrazo(e.target.value)} />
           )}
         </Campo>
-        <Campo
-          rotulo="Renda mensal (R$)"
-          ajuda="Opcional. Sem renda, vale o limite fixo."
-          erro={erros.renda}
-          className="sm:col-span-2"
-        >
+        <Campo rotulo="Renda mensal (R$)" ajuda="Opcional. Sem renda, vale o limite fixo." erro={erros.renda}>
           {(props) => (
             <Input {...props} inputMode="decimal" value={renda} onChange={(e) => setRenda(e.target.value)} />
+          )}
+        </Campo>
+        <Campo rotulo="Nascimento" ajuda="Opcional. Com o Serpro ligado, sem ele o CPF fica não verificado.">
+          {(props) => (
+            <Input
+              {...props}
+              type="date"
+              value={nascimento}
+              onChange={(e) => setNascimento(e.target.value)}
+            />
           )}
         </Campo>
         <Button type="submit" className="sm:col-span-2" disabled={testar.isPending}>
@@ -137,6 +147,14 @@ export function PainelTeste({ obterPolitica, aoRecusar }: PainelTesteProps) {
             oferta={testar.data.oferta}
             motivos={testar.data.motivos}
           />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">De onde vêm os dados</h3>
+            <FontesDados
+              fontes={testar.data.fontes}
+              fatores={testar.data.score_fatores}
+              cadastro={testar.data.cadastro}
+            />
+          </div>
           <div className="space-y-2">
             <h3 className="text-sm font-semibold">Regras avaliadas</h3>
             <TrilhaRegras trilha={testar.data.trilha} />
