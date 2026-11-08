@@ -1,0 +1,1 @@
+export { StatusDecisao } from './StatusDecisao'
