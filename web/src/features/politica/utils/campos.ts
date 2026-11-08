@@ -72,9 +72,16 @@ function literal(valor: Condicao['valor']): string {
   return typeof valor === 'string' ? JSON.stringify(valor) : String(valor)
 }
 
+/** "in" em fraude.sinais quer dizer "contém": com lista, basta um dos sinais (igual ao servidor). */
+function sinaisParaCel(valor: Condicao['valor']): string {
+  const sinais = Array.isArray(valor) ? valor : [valor]
+  const partes = sinais.map((sinal) => `${literal(sinal)} in fraude.sinais`)
+  return partes.length === 1 ? partes.join('') : `(${partes.join(' || ')})`
+}
+
 /** Uma condição do editor visual em CEL. Campo opcional ganha has(), como o servidor exige. */
 export function condicaoParaCel({ campo, operador, valor }: Condicao): string {
-  if (CAMPOS[campo].tipo === 'sinal') return `${literal(valor)} in ${campo}`
+  if (CAMPOS[campo].tipo === 'sinal') return sinaisParaCel(valor)
   const comparacao = `${campo} ${operador} ${literal(valor)}`
   return CAMPOS[campo].opcional ? `has(${campo}) && ${comparacao}` : comparacao
 }

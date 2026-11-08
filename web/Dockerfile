@@ -1,10 +1,12 @@
 FROM node:24-alpine AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
+# Contexto é a raiz do repositório: o build do web lê api/ (contrato e fixtures compartilhados com o Go).
+COPY web/package.json web/package-lock.json ./
 RUN npm ci
-COPY . .
+COPY web/ ./
+COPY api/ /api/
 RUN npm run build
 
 FROM nginx:1.29-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

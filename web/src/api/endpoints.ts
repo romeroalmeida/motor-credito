@@ -8,8 +8,12 @@ export const endpoints = {
     eu: '/painel/auth/eu',
   },
   visaoGeral: '/painel/visao-geral',
+  auditoria: {
+    lista: '/painel/auditoria',
+    integridade: '/painel/auditoria/integridade',
+  },
   consultas: {
-    lista: '/painel/consultas',
+    busca: '/painel/consultas/busca',
     detalhe: (id: string) => `/painel/consultas/${encodeURIComponent(id)}`,
   },
   politicas: {

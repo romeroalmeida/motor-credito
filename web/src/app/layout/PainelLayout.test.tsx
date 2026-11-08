@@ -13,7 +13,7 @@ describe('rotas e layout', () => {
     comSessao('admin')
     renderizarApp('/consultas')
     const menu = await screen.findByRole('navigation', { name: 'Menu principal' })
-    const rotulos = ['Visão geral', 'Consultas', 'Política', 'Chaves de API', 'Equipe']
+    const rotulos = ['Visão geral', 'Consultas', 'Política', 'Chaves de API', 'Equipe', 'Auditoria']
     for (const rotulo of rotulos) expect(screen.getByRole('link', { name: rotulo })).toBeInTheDocument()
     expect(menu.querySelectorAll('a')).toHaveLength(rotulos.length)
     expect(screen.getByRole('link', { name: 'Consultas' })).toHaveAttribute('aria-current', 'page')
@@ -21,10 +21,10 @@ describe('rotas e layout', () => {
 
   it.each<[Papel, string[]]>([
     ['analista', ['Visão geral', 'Consultas', 'Política']],
-    ['auditor', ['Visão geral']],
+    ['auditor', ['Auditoria']],
   ])('%s só vê o que o papel permite', async (papel, esperados) => {
     comSessao(papel)
-    renderizarApp('/visao-geral')
+    renderizarApp('/')
     const menu = await screen.findByRole('navigation', { name: 'Menu principal' })
     const links = [...menu.querySelectorAll('a')].map((a) => a.textContent)
     expect(links).toEqual(esperados)

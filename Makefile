@@ -7,10 +7,10 @@ banco:
 	docker compose up -d postgres
 
 dev: banco
-	@echo "API em :8080 e painel em :5173 (Ctrl+C encerra os dois)"
+	@echo "API em :8080 e painel em :5179 (Ctrl+C encerra os dois)"
 	@trap 'kill 0' INT TERM; \
 	  (set -a; [ -f .env ] && . ./.env; set +a; go run ./cmd/api) & \
-	  npm --prefix web run dev & \
+	  API_DEV=http://127.0.0.1:8080 npm --prefix web run dev & \
 	  wait
 
 test:

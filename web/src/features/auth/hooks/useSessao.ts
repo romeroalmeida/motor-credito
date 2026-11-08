@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessaoStore } from '@/state/useSessaoStore'
-import { buscarEu, confirmarDoisFatores, entrar, type Eu, sair } from '../services/authService'
+import { buscarEu, cadastrar, confirmarDoisFatores, entrar, type Eu, sair } from '../services/authService'
 
 export const CHAVE_EU = ['sessao', 'eu'] as const
 
@@ -20,6 +20,23 @@ export function useEu() {
 
 export function useEntrar() {
   return useMutation({ mutationFn: entrar })
+}
+
+export function useCadastrar() {
+  return useMutation({ mutationFn: cadastrar })
+}
+
+/** QR do otpauth gerado no navegador (o segredo não sai para serviço nenhum); a lib vem num chunk à parte. */
+export function useQrCode(otpauth: string | undefined) {
+  return useQuery({
+    queryKey: ['cadastro', 'qr', otpauth],
+    queryFn: async () => {
+      const { toDataURL } = await import('qrcode')
+      return toDataURL(otpauth ?? '', { margin: 1, width: 208 })
+    },
+    enabled: Boolean(otpauth),
+    staleTime: Infinity,
+  })
 }
 
 export function useConfirmarDoisFatores() {

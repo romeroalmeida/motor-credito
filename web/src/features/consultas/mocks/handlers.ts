@@ -1,5 +1,5 @@
 import { delay, type HttpHandler, http, HttpResponse } from 'msw'
-import type { Schemas } from '@/shared/types'
+import type { ApiPaths, Schemas } from '@/shared/types'
 
 // Handlers MSW da feature, montados em src/mocks/handlers.ts (dev e Vitest).
 // 40 consultas determinísticas com os quatro status que a v1 produz.
@@ -85,7 +85,7 @@ export const CONSULTAS: Resumo[] = Array.from({ length: 40 }, (_, i) => montarRe
 const MOTIVOS: Record<Resumo['status'], Schemas['Motivo'][]> = {
   aprovado: [],
   contraproposta: [{ codigo: 'LIMITE_FAIXA', texto: 'Valor pedido acima do limite para o score' }],
-  negado: [{ codigo: 'FAIXA_NEGA', texto: 'A faixa C nega o pedido' }],
+  negado: [{ codigo: 'FAIXA_NEGADA', texto: 'A faixa C nega o pedido' }],
   documento_invalido: [{ codigo: 'DOCUMENTO_INVALIDO', texto: 'Documento com dígito verificador inválido' }],
   em_analise: [],
 }
@@ -153,12 +153,9 @@ function montarDetalhe(resumo: Resumo, i: number): Detalhe {
   }
 }
 
-function filtrar(parametros: URLSearchParams): Resumo[] {
-  const status = parametros.get('status')
-  const faixa = parametros.get('faixa')
-  const documento = parametros.get('documento')
-  const desde = parametros.get('desde')
-  const ate = parametros.get('ate')
+type Busca = ApiPaths['/painel/consultas/busca']['post']['requestBody']['content']['application/json']
+
+function filtrar({ status, faixa, documento, desde, ate }: Busca): Resumo[] {
   return CONSULTAS.filter(
     (c, i) =>
       (!status || c.status === status) &&
@@ -170,11 +167,11 @@ function filtrar(parametros: URLSearchParams): Resumo[] {
 }
 
 export const handlers: HttpHandler[] = [
-  http.get('*/painel/consultas', async ({ request }) => {
-    const parametros = new URL(request.url).searchParams
-    const limite = Number(parametros.get('limite') ?? 25)
-    const inicio = Number(parametros.get('cursor') ?? 0)
-    const encontradas = filtrar(parametros)
+  http.post('*/painel/consultas/busca', async ({ request }) => {
+    const busca = (await request.json()) as Busca
+    const limite = busca.limite ?? 25
+    const inicio = Number(busca.cursor ?? 0)
+    const encontradas = filtrar(busca)
     const proximo = inicio + limite < encontradas.length ? String(inicio + limite) : null
     await delay()
     return HttpResponse.json({ itens: encontradas.slice(inicio, inicio + limite), proximo_cursor: proximo })

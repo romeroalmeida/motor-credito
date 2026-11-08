@@ -104,12 +104,47 @@ func (h handlers) erroIdempotencia(w http.ResponseWriter, r *http.Request, err e
 	return true
 }
 
-// listarConsultas: GET /painel/consultas com filtros e cursor.
+// filtroConsultas são os filtros da lista; o documento só chega pelo corpo de POST /painel/consultas/busca.
+type filtroConsultas struct {
+	Status    string `json:"status"`
+	Faixa     string `json:"faixa"`
+	Documento string `json:"documento"`
+	Desde     string `json:"desde"`
+	Ate       string `json:"ate"`
+	Cursor    string `json:"cursor"`
+	Limite    *int   `json:"limite"`
+}
+
+// listarConsultas: GET /painel/consultas com filtros e cursor. Documento na URL é recusado: cairia em log de acesso.
 func (h handlers) listarConsultas(w http.ResponseWriter, r *http.Request) {
-	s, _ := painelauth.SessaoDoContexto(r.Context())
 	q := r.URL.Query()
-	f := repositorio.Filtro{Status: q.Get("status"), Faixa: q.Get("faixa"), Desde: q.Get("desde"), Ate: q.Get("ate"),
-		Cursor: q.Get("cursor"), Limite: limitePadrao}
+	if q.Has("documento") {
+		erroCampos(w, map[string]string{"documento": "use POST /painel/consultas/busca"})
+		return
+	}
+	f := filtroConsultas{Status: q.Get("status"), Faixa: q.Get("faixa"), Desde: q.Get("desde"), Ate: q.Get("ate"), Cursor: q.Get("cursor")}
+	if v := q.Get("limite"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			n = 0 // cai na validação de faixa
+		}
+		f.Limite = &n
+	}
+	h.responderLista(w, r, f)
+}
+
+// buscarConsultas: POST /painel/consultas/busca, os mesmos filtros no corpo (inclusive o documento).
+func (h handlers) buscarConsultas(w http.ResponseWriter, r *http.Request) {
+	var f filtroConsultas
+	if lerJSON(w, r, &f) {
+		h.responderLista(w, r, f)
+	}
+}
+
+func (h handlers) responderLista(w http.ResponseWriter, r *http.Request, entrada filtroConsultas) {
+	s, _ := painelauth.SessaoDoContexto(r.Context())
+	f := repositorio.Filtro{Status: entrada.Status, Faixa: entrada.Faixa, Desde: entrada.Desde, Ate: entrada.Ate,
+		Cursor: entrada.Cursor, Limite: limitePadrao}
 	campos := map[string]string{}
 	if f.Status != "" && !statusValidos[f.Status] {
 		campos["status"] = "status desconhecido"
@@ -119,15 +154,14 @@ func (h handlers) listarConsultas(w http.ResponseWriter, r *http.Request) {
 			campos[nome] = "data no formato AAAA-MM-DD"
 		}
 	}
-	if v := q.Get("limite"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > limiteMaximo {
+	if entrada.Limite != nil {
+		if *entrada.Limite < 1 || *entrada.Limite > limiteMaximo {
 			campos["limite"] = "entre 1 e 100"
 		}
-		f.Limite = n
+		f.Limite = *entrada.Limite
 	}
-	if doc := q.Get("documento"); doc != "" {
-		hash, err := h.Consultas.HashDocumento(doc)
+	if entrada.Documento != "" {
+		hash, err := h.Consultas.HashDocumento(entrada.Documento)
 		if err != nil {
 			campos["documento"] = "CPF ou CNPJ completo e válido"
 		}

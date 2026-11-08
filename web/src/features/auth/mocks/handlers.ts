@@ -6,6 +6,7 @@ import type { Papel, Schemas } from '@/shared/types'
 
 export const SENHA_DEMO = 'senha-demo'
 export const CODIGO_DEMO = '123456'
+export const TOKEN_CONVITE_DEMO = 'convite-demo'
 
 // Sessão concluída sobrevive a recarregar a página (só no mock; a real vive no cookie httpOnly).
 const CHAVE_SESSAO = 'mock-sessao-email'
@@ -36,6 +37,21 @@ export const handlers: HttpHandler[] = [
     pendente.email = corpo.email
     document.cookie = 'csrf=csrf-demo; path=/'
     return HttpResponse.json({ proximo: '2fa' })
+  }),
+
+  http.post('*/painel/auth/cadastro', async ({ request }) => {
+    const corpo = (await request.json()) as { token?: string }
+    await delay()
+    if (corpo.token !== TOKEN_CONVITE_DEMO)
+      return HttpResponse.json({ erro: 'nao_encontrado' }, { status: 404 })
+    pendente.email = 'convidada@credifacil.com.br'
+    document.cookie = 'csrf=csrf-demo; path=/'
+    return HttpResponse.json({
+      proximo: '2fa',
+      otpauth_url:
+        'otpauth://totp/Motor%20de%20Cr%C3%A9dito:convidada?secret=JBSWY3DPEHPK3PXP&issuer=Motor%20de%20Cr%C3%A9dito',
+      segredo_totp: 'JBSWY3DPEHPK3PXP',
+    })
   }),
 
   http.post('*/painel/auth/2fa', async ({ request }) => {

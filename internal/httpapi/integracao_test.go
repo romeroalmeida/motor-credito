@@ -41,6 +41,7 @@ type ambiente struct {
 	tenantA, tenantB string
 	chaveA           string // "ck_live_<id>_<segredo>" do tenant A
 	sessA, sessB     sessao
+	sessAuditorA     sessao // papel auditor no tenant A
 }
 
 func novoAmbiente(t *testing.T) *ambiente {
@@ -64,6 +65,13 @@ func novoAmbiente(t *testing.T) *ambiente {
 			t.Fatalf("publicar política inicial: %v", err)
 		}
 	}
+	aud := plataforma.NovoID("usr")
+	a.sessAuditorA = sessao{token: "tok-aud", csrf: "csrf-aud"}
+	a.dono(`INSERT INTO usuarios (id, email, nome, senha_hash) VALUES ($1, $1 || '@t.local', 'Auditor', 'x')`, aud)
+	a.dono(`INSERT INTO associacoes (usuario_id, tenant_id, papel) VALUES ($1, $2, 'auditor')`, aud, a.tenantA)
+	a.dono(`INSERT INTO sessoes (id, token_hash, csrf_hash, usuario_id, tenant_id, dois_fatores_em, expira_em)
+		VALUES ($1, $2, $3, $4, $5, now(), now() + interval '1 hour')`,
+		plataforma.NovoID("ses"), hash(a.sessAuditorA.token), hash(a.sessAuditorA.csrf), aud, a.tenantA)
 	chave, err := tenants.CriarChaveComNome(ctx, a.tenantA, "teste")
 	if err != nil {
 		t.Fatal(err)
@@ -288,19 +296,25 @@ func (a *ambiente) testarIsolamento(t *testing.T) {
 	listaA := decodificar[struct {
 		Itens   []consulta.Resumo `json:"itens"`
 		Proximo *string           `json:"proximo_cursor"`
-	}](t, a.painel(a.sessA, http.MethodGet, "/painel/consultas?documento=000.000.004-34&limite=2", ""), http.StatusOK)
+	}](t, a.painel(a.sessA, http.MethodPost, "/painel/consultas/busca", `{"documento":"000.000.004-34","limite":2}`), http.StatusOK)
 	if len(listaA.Itens) != 2 || listaA.Proximo == nil || listaA.Itens[0].ID != r.ID {
 		t.Fatalf("lista de A por documento: %+v", listaA)
 	}
 	pag2 := decodificar[struct {
 		Itens []consulta.Resumo `json:"itens"`
 	}](t,
-		a.painel(a.sessA, http.MethodGet, "/painel/consultas?documento=000.000.004-34&limite=2&cursor="+*listaA.Proximo, ""), http.StatusOK)
+		a.painel(a.sessA, http.MethodPost, "/painel/consultas/busca", `{"documento":"000.000.004-34","limite":2,"cursor":"`+*listaA.Proximo+`"}`), http.StatusOK)
 	if len(pag2.Itens) == 0 || pag2.Itens[0].ID >= *listaA.Proximo {
 		t.Fatalf("segunda página: %+v", pag2)
 	}
 	if w := a.painel(a.sessA, http.MethodGet, "/painel/consultas?status=xyz", ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("filtro inválido: %d", w.Code)
+	}
+	if w := a.painel(a.sessA, http.MethodGet, "/painel/consultas?documento=000.000.004-34", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("documento na URL aceito: %d", w.Code)
+	}
+	if w := a.painel(a.sessAuditorA, http.MethodPost, "/painel/consultas/busca", `{}`); w.Code != http.StatusForbidden {
+		t.Fatalf("auditor buscou consultas: %d", w.Code)
 	}
 }
 
@@ -356,6 +370,10 @@ func (a *ambiente) testarPolitica(t *testing.T) {
 		t.Fatalf("reversão: %+v", v3)
 	}
 	a.quererVersaoNaDecisao(t, 3, 290)
+	estado := decodificar[repositorio.PoliticaEstado](t, a.painel(a.sessA, http.MethodGet, "/painel/politicas", ""), http.StatusOK)
+	if estado.RascunhoDifereDaPublicada || estado.Rascunho.Faixas[2].TaxaBps != 290 {
+		t.Fatalf("reverter não trocou o rascunho: %+v", estado)
+	}
 
 	versoes := decodificar[map[string][]repositorio.Versao](t, a.painel(a.sessA, http.MethodGet, "/painel/politicas/versoes", ""), http.StatusOK)
 	if len(versoes["itens"]) != 3 || versoes["itens"][0].Versao != 3 || versoes["itens"][0].Conteudo != nil {
@@ -413,7 +431,42 @@ func (a *ambiente) testarAuditoria(t *testing.T) {
 		t.Fatal("motor_app conseguiu alterar a auditoria")
 	}
 
+	type pagina struct {
+		Itens   []auditoria.Registro `json:"itens"`
+		Proximo *string              `json:"proximo_cursor"`
+	}
+	type integridade struct {
+		Integra  bool   `json:"integra"`
+		Mensagem string `json:"mensagem"`
+	}
+	if w := a.painel(a.sessAuditorA, http.MethodGet, "/painel/visao-geral", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("auditor leu a visão geral: %d", w.Code)
+	}
+	if i := decodificar[integridade](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria/integridade", ""), http.StatusOK); !i.Integra {
+		t.Fatalf("cadeia íntegra recusada pela rota: %+v", i)
+	}
+	p1 := decodificar[pagina](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria?limite=2", ""), http.StatusOK)
+	if len(p1.Itens) != 2 || p1.Proximo == nil || !p1.Itens[0].HashOK || p1.Itens[0].Seq <= p1.Itens[1].Seq {
+		t.Fatalf("primeira página da auditoria: %+v", p1)
+	}
+	p2 := decodificar[pagina](t, a.painel(a.sessA, http.MethodGet, "/painel/auditoria?limite=2&cursor="+*p1.Proximo, ""), http.StatusOK)
+	if len(p2.Itens) == 0 || p2.Itens[0].Seq >= p1.Itens[1].Seq {
+		t.Fatalf("segunda página da auditoria: %+v", p2)
+	}
+	if b := decodificar[pagina](t, a.painel(a.sessB, http.MethodGet, "/painel/auditoria?limite=100", ""), http.StatusOK); len(b.Itens) != a.contar(`SELECT count(*) FROM auditoria WHERE tenant_id = $1`, a.tenantB) {
+		t.Fatalf("B vê %d registros de auditoria, não só os dele", len(b.Itens))
+	}
+
 	a.dono(`UPDATE auditoria SET dados = jsonb_set(dados, '{status}', '"aprovado"') WHERE tenant_id = $1 AND seq = 3`, a.tenantA)
+	if i := decodificar[integridade](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria/integridade", ""), http.StatusOK); i.Integra || !strings.Contains(i.Mensagem, "seq 3") {
+		t.Fatalf("adulteração não detectada pela rota: %+v", i)
+	}
+	todos := decodificar[pagina](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria?limite=100", ""), http.StatusOK)
+	for _, r := range todos.Itens {
+		if r.HashOK == (r.Seq == 3) {
+			t.Fatalf("hash_ok do seq %d = %v", r.Seq, r.HashOK)
+		}
+	}
 	err = auditoria.Verificar(ctx, a.banco.Dono, a.tenantA)
 	if !errors.Is(err, auditoria.ErrCadeiaQuebrada) || !strings.Contains(err.Error(), "seq 3") {
 		t.Fatalf("adulteração não detectada: %v", err)

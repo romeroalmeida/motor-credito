@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
@@ -7,12 +6,14 @@ import { z } from 'zod'
 import { AvisoErro, Campo } from '@/shared/components'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
-import { type ErroApi, lerErroApi } from '@/shared/utils/erroApi'
+import { lerErroApi } from '@/shared/utils/erroApi'
 import { useSessaoStore } from '@/state/useSessaoStore'
+import { FormCodigo } from '../components/FormCodigo'
 import type { EstadoVoltar } from '../components/RotaProtegida'
-import { useConfirmarDoisFatores, useEntrar } from '../hooks/useSessao'
+import { useEntrar } from '../hooks/useSessao'
+import { mensagemLogin } from '../utils/mensagens'
 
-const DESTINO_PADRAO = '/visao-geral'
+const DESTINO_PADRAO = '/' // a rota inicial escolhe a área pelo papel
 const MOCKS_LIGADOS = import.meta.env.DEV && import.meta.env.VITE_USAR_MOCKS === 'on'
 
 const esquemaSenha = z.object({
@@ -20,29 +21,10 @@ const esquemaSenha = z.object({
   senha: z.string().min(1, 'Digite sua senha.'),
 })
 
-const esquemaCodigo = z.object({
-  codigo: z.string().regex(/^\d{6}$/, 'O código tem 6 números.'),
-})
-
 // Só caminhos internos: "//site" ou "https://..." viraria redirecionamento aberto.
 function destinoSeguro(estado: unknown): string {
   const de = (estado as EstadoVoltar | null)?.de
   return de && de.startsWith('/') && !de.startsWith('//') && !de.startsWith('/entrar') ? de : DESTINO_PADRAO
-}
-
-function mensagemLogin(erro: ErroApi, passo: 'senha' | 'codigo'): string {
-  if (erro.status === 429) {
-    const espera = erro.esperarSegundos
-      ? ` Tente de novo em ${erro.esperarSegundos} s.`
-      : ' Aguarde um pouco.'
-    return `Muitas tentativas seguidas.${espera}`
-  }
-  if (erro.status === 401) {
-    return passo === 'senha'
-      ? 'E-mail ou senha não conferem.'
-      : 'Código não confere ou expirou. Confira o app autenticador ou volte e entre de novo.'
-  }
-  return erro.mensagem
 }
 
 export function EntrarPage() {
@@ -123,47 +105,6 @@ function FormSenha({ aoAvancar }: { aoAvancar: () => void }) {
       {entrar.isError && <AvisoErro>{mensagemLogin(lerErroApi(entrar.error), 'senha')}</AvisoErro>}
       <Button type="submit" size="lg" className="w-full" disabled={entrar.isPending}>
         {entrar.isPending ? 'Conferindo…' : 'Continuar'}
-      </Button>
-    </form>
-  )
-}
-
-function FormCodigo({ aoVoltar, aoConcluir }: { aoVoltar: () => void; aoConcluir: () => void }) {
-  const confirmar = useConfirmarDoisFatores()
-  const form = useForm<z.infer<typeof esquemaCodigo>>({
-    resolver: zodResolver(esquemaCodigo),
-    defaultValues: { codigo: '' },
-  })
-  const { errors } = form.formState
-
-  const enviar = form.handleSubmit(({ codigo }) => confirmar.mutate(codigo, { onSuccess: aoConcluir }))
-
-  return (
-    <form onSubmit={enviar} noValidate className="space-y-4">
-      <Campo
-        rotulo="Código de 6 números"
-        ajuda="Abra o app autenticador (Google Authenticator, 1Password…) e digite o código atual."
-        erro={errors.codigo?.message}
-      >
-        {(props) => (
-          <Input
-            {...props}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            autoFocus
-            className="h-12 text-center font-mono text-xl tracking-[0.4em] md:text-xl"
-            {...form.register('codigo')}
-          />
-        )}
-      </Campo>
-      {confirmar.isError && <AvisoErro>{mensagemLogin(lerErroApi(confirmar.error), 'codigo')}</AvisoErro>}
-      <Button type="submit" size="lg" className="w-full" disabled={confirmar.isPending}>
-        {confirmar.isPending ? 'Conferindo…' : 'Entrar'}
-      </Button>
-      <Button type="button" variant="ghost" className="w-full" onClick={aoVoltar}>
-        <ArrowLeft aria-hidden="true" />
-        Voltar
       </Button>
     </form>
   )

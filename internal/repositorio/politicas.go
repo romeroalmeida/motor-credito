@@ -84,7 +84,8 @@ func (r *Repo) SalvarRascunho(ctx context.Context, p politica.Politica, usuarioI
 }
 
 // Publicar grava conteudo como versão N+1 e a torna a publicada, com auditoria na mesma transação.
-// Quem chama já compilou o conteudo (422 fica com a camada HTTP). revertidaDe != nil marca uma reversão.
+// Quem chama já compilou o conteudo (422 fica com a camada HTTP). revertidaDe != nil marca uma reversão,
+// que também troca o rascunho pelo conteudo revertido: o editor passa a mostrar o que está em uso.
 func (r *Repo) Publicar(ctx context.Context, conteudo politica.Politica, usuarioID, comentario string, revertidaDe *int) (Versao, error) {
 	bruto, err := json.Marshal(conteudo)
 	if err != nil {
@@ -112,6 +113,12 @@ func (r *Repo) Publicar(ctx context.Context, conteudo politica.Politica, usuario
 		if _, err := tx.Exec(ctx, `UPDATE politicas SET versao_publicada = $2 WHERE id = $1 AND tenant_id = $3`,
 			politicaID, v.Versao, r.tenantID); err != nil {
 			return err
+		}
+		if revertidaDe != nil {
+			if _, err := tx.Exec(ctx, `UPDATE politicas SET rascunho = $2::jsonb, rascunho_atualizado_em = now(),
+				rascunho_atualizado_por = $3 WHERE id = $1 AND tenant_id = $4`, politicaID, string(bruto), usuarioID, r.tenantID); err != nil {
+				return err
+			}
 		}
 		if err := auditoria.Registrar(ctx, tx, r.tenantID, auditoria.EventoPoliticaPublicada, auditoria.AtorUsuario(usuarioID), nil,
 			map[string]any{"politica_id": politicaID, "versao": v.Versao, "revertida_de": revertidaDe, "comentario": comentario}); err != nil {

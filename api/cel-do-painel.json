@@ -1,0 +1,23 @@
+[
+  { "condicoes": [], "cel": "true" },
+  { "condicoes": [{ "campo": "score", "operador": "<=", "valor": 300 }], "cel": "score <= 300" },
+  { "condicoes": [{ "campo": "bureau.divida_total", "operador": ">", "valor": 500000 }], "cel": "bureau.divida_total > 500000" },
+  { "condicoes": [{ "campo": "renda", "operador": ">=", "valor": 300000 }], "cel": "has(renda) && renda >= 300000" },
+  { "condicoes": [{ "campo": "idade", "operador": "<", "valor": 18 }], "cel": "has(idade) && idade < 18" },
+  {
+    "condicoes": [{ "campo": "fraude.sinais", "operador": "in", "valor": "email_descartavel" }],
+    "cel": "\"email_descartavel\" in fraude.sinais"
+  },
+  {
+    "condicoes": [{ "campo": "fraude.sinais", "operador": "in", "valor": ["ip_datacenter", "email_descartavel"] }],
+    "cel": "(\"ip_datacenter\" in fraude.sinais || \"email_descartavel\" in fraude.sinais)"
+  },
+  {
+    "condicoes": [
+      { "campo": "score", "operador": ">=", "valor": 601 },
+      { "campo": "renda", "operador": ">", "valor": 0 },
+      { "campo": "fraude.sinais", "operador": "in", "valor": "ip_datacenter" }
+    ],
+    "cel": "score >= 601 && has(renda) && renda > 0 && \"ip_datacenter\" in fraude.sinais"
+  }
+]

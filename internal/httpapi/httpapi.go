@@ -52,11 +52,17 @@ func Novo(d Deps) http.Handler {
 			r.Use(painelauth.ExigirPapel(painelauth.PapelAdmin, painelauth.PapelAnalista))
 			r.Get("/painel/visao-geral", h.visaoGeral)
 			r.Get("/painel/consultas", h.listarConsultas)
+			r.Post("/painel/consultas/busca", h.buscarConsultas)
 			r.Get("/painel/consultas/{id}", h.detalheConsulta)
 			r.Get("/painel/politicas", h.estadoPolitica)
 			r.Get("/painel/politicas/versoes", h.versoes)
 			r.Get("/painel/politicas/versoes/{versao}", h.versao)
 			r.Get("/painel/politicas/diferenca", h.diferenca)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(painelauth.ExigirPapel(painelauth.PapelAdmin, painelauth.PapelAuditor))
+			r.Get("/painel/auditoria", h.listarAuditoria)
+			r.Get("/painel/auditoria/integridade", h.integridadeAuditoria)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(painelauth.ExigirPapel(painelauth.PapelAdmin))

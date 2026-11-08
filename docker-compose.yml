@@ -37,8 +37,11 @@ services:
     ports:
       - "127.0.0.1:58080:8080"
 
+  # Painel e API na mesma origem (nginx repassa /painel e /v1): o cookie SameSite=Strict só funciona assim.
   web:
-    build: ./web
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     container_name: motor-credito-web
     depends_on:
       - api

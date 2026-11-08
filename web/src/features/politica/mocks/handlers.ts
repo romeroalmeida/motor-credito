@@ -202,7 +202,7 @@ function simular(p: Politica, ctx: Contexto, pedido: Schemas['Pedido']): Schemas
       status: 'negado',
       faixa_risco: faixa.rotulo,
       oferta: null,
-      motivos: [{ codigo: 'FAIXA_NEGA', texto: `A faixa ${faixa.rotulo} nega o pedido` }],
+      motivos: [{ codigo: 'FAIXA_NEGADA', texto: `A faixa ${faixa.rotulo} nega o pedido` }],
       trilha,
     }
 

@@ -26,6 +26,7 @@ tags:
   - name: consultas
   - name: politica
   - name: visao-geral
+  - name: auditoria
   - name: saude
 
 paths:
@@ -364,14 +365,51 @@ paths:
     get:
       tags: [consultas]
       summary: Lista consultas do tenant (mais recentes primeiro)
+      description: |
+        Filtro por documento **não** vai na URL (cairia em log de acesso): `documento` na query responde 400.
+        Para buscar por documento use `POST /painel/consultas/busca`.
       parameters:
         - { name: status, in: query, schema: { $ref: "#/components/schemas/StatusDecisao" } }
         - { name: faixa, in: query, schema: { type: string }, description: Rótulo da faixa de risco }
-        - { name: documento, in: query, schema: { type: string }, description: "CPF/CNPJ completo (busca por HMAC; nunca parcial)" }
         - { name: desde, in: query, schema: { type: string, format: date } }
         - { name: ate, in: query, schema: { type: string, format: date } }
         - { name: cursor, in: query, schema: { type: string }, description: "Valor de proximo_cursor da página anterior" }
         - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens, proximo_cursor]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/ConsultaResumo" } }
+                  proximo_cursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/consultas/busca:
+    post:
+      tags: [consultas]
+      summary: Mesma lista, com os filtros no corpo (único jeito de filtrar por documento)
+      description: Não grava nada; é POST só para o documento não aparecer na URL. Exige X-CSRF como todo POST.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: "#/components/schemas/StatusDecisao" }
+                faixa: { type: string }
+                documento: { type: string, description: "CPF/CNPJ completo (busca por HMAC; nunca parcial)" }
+                desde: { type: string, format: date }
+                ate: { type: string, format: date }
+                cursor: { type: string }
+                limite: { type: integer, minimum: 1, maximum: 100, default: 25 }
       responses:
         "200":
           description: Ok
@@ -442,7 +480,7 @@ paths:
   /painel/politicas/testar:
     post:
       tags: [politica]
-      summary: Roda o rascunho contra um documento de exemplo (não grava consulta)
+      summary: Roda o rascunho contra um documento de exemplo (não grava consulta). Só admin.
       parameters: [{ $ref: "#/components/parameters/XCSRF" }]
       requestBody:
         required: true
@@ -536,6 +574,7 @@ paths:
     post:
       tags: [politica]
       summary: Publica uma cópia desta versão como versão nova
+      description: O rascunho também passa a ser essa cópia (edições não publicadas são descartadas).
       parameters: [{ $ref: "#/components/parameters/XCSRF" }]
       requestBody:
         required: true
@@ -561,7 +600,7 @@ paths:
   /painel/politicas/diferenca:
     get:
       tags: [politica]
-      summary: Diferença entre duas versões (ou versão × rascunho)
+      summary: Diferença entre duas versões (ou versão × rascunho). Admin e analista.
       parameters:
         - { name: de, in: query, required: true, schema: { type: integer, minimum: 1 } }
         - { name: para, in: query, required: true, schema: { type: string }, description: 'Número da versão ou "rascunho"' }
@@ -582,7 +621,48 @@ paths:
         "403": { $ref: "#/components/responses/Proibido" }
         "404": { $ref: "#/components/responses/NaoEncontrado" }
 
-  # ------------------------------------------------------------------ Painel: visão geral
+  # ------------------------------------------------------------------ Painel: auditoria (admin e auditor)
+  /painel/auditoria:
+    get:
+      tags: [auditoria]
+      summary: Registros da cadeia de auditoria, mais novo primeiro
+      parameters:
+        - { name: cursor, in: query, schema: { type: string }, description: "Valor de proximo_cursor da página anterior" }
+        - { name: limite, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens, proximo_cursor]
+                properties:
+                  itens: { type: array, items: { $ref: "#/components/schemas/RegistroAuditoria" } }
+                  proximo_cursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  /painel/auditoria/integridade:
+    get:
+      tags: [auditoria]
+      summary: Percorre a cadeia inteira do tenant e diz se está íntegra
+      responses:
+        "200":
+          description: Resultado da verificação
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [integra]
+                properties:
+                  integra: { type: boolean }
+                  mensagem: { type: string, description: "Presente quando quebrada: primeiro seq que não confere" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+
+  # ------------------------------------------------------------------ Painel: visão geral (admin, analista)
   /painel/visao-geral:
     get:
       tags: [visao-geral]
@@ -818,6 +898,17 @@ components:
         rotulo: { type: string, description: Código do corte ou rótulo da faixa }
         expressao: { type: string, description: CEL efetivamente avaliado }
         bateu: { type: boolean }
+
+    RegistroAuditoria:
+      type: object
+      required: [seq, evento, ator, consulta_id, criado_em, hash_ok]
+      properties:
+        seq: { type: integer }
+        evento: { type: string, examples: [consulta.decidida, politica.publicada] }
+        ator: { type: string, examples: ["api:<chave_id>", "usuario:<id>"] }
+        consulta_id: { type: [string, "null"] }
+        criado_em: { type: string, format: date-time }
+        hash_ok: { type: boolean, description: "O hash confere com o conteúdo desta linha (a ligação entre linhas é conferida em /integridade)" }
 
     ConsultaResumo:
       type: object

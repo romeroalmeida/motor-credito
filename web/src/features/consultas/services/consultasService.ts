@@ -5,7 +5,7 @@ import type { ApiPaths, Schemas } from '@/shared/types'
 export type ConsultaResumo = Schemas['ConsultaResumo']
 export type ConsultaDetalhe = Schemas['ConsultaDetalhe']
 export type PaginaConsultas =
-  ApiPaths['/painel/consultas']['get']['responses']['200']['content']['application/json']
+  ApiPaths['/painel/consultas/busca']['post']['responses']['200']['content']['application/json']
 
 export interface FiltrosConsultas {
   status?: Schemas['StatusDecisao']
@@ -18,9 +18,12 @@ export interface FiltrosConsultas {
 
 export const TAMANHO_PAGINA = 25
 
+/** POST com os filtros no corpo: o documento nunca vai na URL (log de acesso). */
 export async function listarConsultas(filtros: FiltrosConsultas, cursor?: string): Promise<PaginaConsultas> {
-  const { data } = await apiClient.get<PaginaConsultas>(endpoints.consultas.lista, {
-    params: { ...filtros, cursor, limite: TAMANHO_PAGINA },
+  const { data } = await apiClient.post<PaginaConsultas>(endpoints.consultas.busca, {
+    ...filtros,
+    cursor,
+    limite: TAMANHO_PAGINA,
   })
   return data
 }

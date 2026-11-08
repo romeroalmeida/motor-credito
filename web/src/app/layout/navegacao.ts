@@ -1,4 +1,12 @@
-import { Gauge, KeyRound, ListChecks, type LucideIcon, SlidersHorizontal, Users } from 'lucide-react'
+import {
+  Gauge,
+  KeyRound,
+  ListChecks,
+  type LucideIcon,
+  ScrollText,
+  SlidersHorizontal,
+  Users,
+} from 'lucide-react'
 import type { Area } from '@/shared/utils/permissoes'
 
 export interface ItemNavegacao {
@@ -14,4 +22,5 @@ export const ITENS_NAVEGACAO: readonly ItemNavegacao[] = [
   { rota: '/politica', rotulo: 'Política', icone: SlidersHorizontal, area: 'politica' },
   { rota: '/chaves', rotulo: 'Chaves de API', icone: KeyRound, area: 'chaves' },
   { rota: '/equipe', rotulo: 'Equipe', icone: Users, area: 'equipe' },
+  { rota: '/auditoria', rotulo: 'Auditoria', icone: ScrollText, area: 'auditoria' },
 ]

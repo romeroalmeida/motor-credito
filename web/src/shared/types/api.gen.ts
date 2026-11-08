@@ -284,6 +284,20 @@ export interface paths {
         }
         400: components['responses']['CorpoInvalido']
         404: components['responses']['NaoEncontrado']
+        /** @description O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente) */
+        409: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            /**
+             * @example {
+             *       "erro": "conflito"
+             *     }
+             */
+            'application/json': components['schemas']['Erro']
+          }
+        }
       }
     }
     delete?: never
@@ -691,15 +705,17 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** Lista consultas do tenant (mais recentes primeiro) */
+    /**
+     * Lista consultas do tenant (mais recentes primeiro)
+     * @description Filtro por documento **não** vai na URL (cairia em log de acesso): `documento` na query responde 400.
+     *     Para buscar por documento use `POST /painel/consultas/busca`.
+     */
     get: {
       parameters: {
         query?: {
           status?: components['schemas']['StatusDecisao']
           /** @description Rótulo da faixa de risco */
           faixa?: string
-          /** @description CPF/CNPJ completo (busca por HMAC; nunca parcial) */
-          documento?: string
           desde?: string
           ate?: string
           /** @description Valor de proximo_cursor da página anterior */
@@ -731,6 +747,70 @@ export interface paths {
     }
     put?: never
     post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/painel/consultas/busca': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /**
+     * Mesma lista, com os filtros no corpo (único jeito de filtrar por documento)
+     * @description Não grava nada; é POST só para o documento não aparecer na URL. Exige X-CSRF como todo POST.
+     */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            status?: components['schemas']['StatusDecisao']
+            faixa?: string
+            /** @description CPF/CNPJ completo (busca por HMAC; nunca parcial) */
+            documento?: string
+            /** Format: date */
+            desde?: string
+            /** Format: date */
+            ate?: string
+            cursor?: string
+            /** @default 25 */
+            limite?: number
+          }
+        }
+      }
+      responses: {
+        /** @description Ok */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': {
+              itens: components['schemas']['ConsultaResumo'][]
+              proximo_cursor: string | null
+            }
+          }
+        }
+        400: components['responses']['CorpoInvalido']
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+      }
+    }
     delete?: never
     options?: never
     head?: never
@@ -787,7 +867,10 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** Política do tenant (rascunho + versão publicada) */
+    /**
+     * Política do tenant (rascunho + versão publicada)
+     * @description No primeiro acesso cria o rascunho a partir do modelo Empréstimo PF (ainda não publicado).
+     */
     get: {
       parameters: {
         query?: never
@@ -855,6 +938,7 @@ export interface paths {
         400: components['responses']['CorpoInvalido']
         401: components['responses']['NaoAutorizado']
         403: components['responses']['Proibido']
+        413: components['responses']['CorpoGrande']
       }
     }
     post?: never
@@ -873,7 +957,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** Roda o rascunho contra um documento de exemplo (não grava consulta) */
+    /** Roda o rascunho contra um documento de exemplo (não grava consulta). Só admin. */
     post: {
       parameters: {
         query?: never
@@ -1041,6 +1125,7 @@ export interface paths {
             'application/json': components['schemas']['PoliticaVersao']
           }
         }
+        400: components['responses']['CorpoInvalido']
         401: components['responses']['NaoAutorizado']
         403: components['responses']['Proibido']
         404: components['responses']['NaoEncontrado']
@@ -1065,7 +1150,10 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** Publica uma cópia desta versão como versão nova */
+    /**
+     * Publica uma cópia desta versão como versão nova
+     * @description O rascunho também passa a ser essa cópia (edições não publicadas são descartadas).
+     */
     post: {
       parameters: {
         query?: never
@@ -1096,9 +1184,11 @@ export interface paths {
             'application/json': components['schemas']['PoliticaVersao']
           }
         }
+        400: components['responses']['CorpoInvalido']
         401: components['responses']['NaoAutorizado']
         403: components['responses']['Proibido']
         404: components['responses']['NaoEncontrado']
+        422: components['responses']['PoliticaInvalida']
       }
     }
     delete?: never
@@ -1114,7 +1204,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    /** Diferença entre duas versões (ou versão × rascunho) */
+    /** Diferença entre duas versões (ou versão × rascunho). Admin e analista. */
     get: {
       parameters: {
         query: {
@@ -1145,6 +1235,94 @@ export interface paths {
         401: components['responses']['NaoAutorizado']
         403: components['responses']['Proibido']
         404: components['responses']['NaoEncontrado']
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/painel/auditoria': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Registros da cadeia de auditoria, mais novo primeiro */
+    get: {
+      parameters: {
+        query?: {
+          /** @description Valor de proximo_cursor da página anterior */
+          cursor?: string
+          limite?: number
+        }
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Ok */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': {
+              itens: components['schemas']['RegistroAuditoria'][]
+              proximo_cursor: string | null
+            }
+          }
+        }
+        400: components['responses']['CorpoInvalido']
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+      }
+    }
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/painel/auditoria/integridade': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Percorre a cadeia inteira do tenant e diz se está íntegra */
+    get: {
+      parameters: {
+        query?: never
+        header?: never
+        path?: never
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Resultado da verificação */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': {
+              integra: boolean
+              /** @description Presente quando quebrada: primeiro seq que não confere */
+              mensagem?: string
+            }
+          }
+        }
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
       }
     }
     put?: never
@@ -1286,10 +1464,16 @@ export interface components {
     }
     Motivo: {
       /**
+       * @description Os de corte vêm da política. Falhas sempre negam: BUREAU_INDISPONIVEL (erro ou > 2s),
+       *     ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL (nenhuma versão publicada), ERRO_POLITICA (avaliação falhou).
        * @example LIMITE_FAIXA
        * @example SEM_FAIXA
+       * @example FAIXA_NEGADA
        * @example BUREAU_INDISPONIVEL
        * @example DOCUMENTO_INVALIDO
+       * @example ANTIFRAUDE_INDISPONIVEL
+       * @example POLITICA_INDISPONIVEL
+       * @example ERRO_POLITICA
        */
       codigo: string
       texto: string
@@ -1339,12 +1523,33 @@ export interface components {
       expressao: string
       bateu: boolean
     }
+    RegistroAuditoria: {
+      seq: number
+      /**
+       * @example consulta.decidida
+       * @example politica.publicada
+       */
+      evento: string
+      /**
+       * @example api:<chave_id>
+       * @example usuario:<id>
+       */
+      ator: string
+      consulta_id: string | null
+      /** Format: date-time */
+      criado_em: string
+      /** @description O hash confere com o conteúdo desta linha (a ligação entre linhas é conferida em /integridade) */
+      hash_ok: boolean
+    }
     ConsultaResumo: {
       id: string
-      /** @example ***.456.789-** */
+      /**
+       * @description "***" quando o documento era inválido (não é guardado)
+       * @example ***.456.789-**
+       */
       documento_mascarado: string
-      /** @enum {string} */
-      tipo_documento?: 'cpf' | 'cnpj'
+      /** @enum {string|null} */
+      tipo_documento?: 'cpf' | 'cnpj' | null
       status: components['schemas']['StatusDecisao']
       score?: number | null
       faixa_risco?: string | null
@@ -1357,8 +1562,8 @@ export interface components {
     }
     ConsultaDetalhe: components['schemas']['ConsultaResposta'] & {
       documento_mascarado: string
-      /** @enum {string} */
-      tipo_documento?: 'cpf' | 'cnpj'
+      /** @enum {string|null} */
+      tipo_documento?: 'cpf' | 'cnpj' | null
       finalidade: string
       base_legal: string
       /** @description Quais dados opcionais vieram (sem os valores) */

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -106,6 +107,41 @@ func Verificar(ctx context.Context, q Consultor, tenantID string) error {
 		esperadoSeq, anterior = seq+1, hash
 	}
 	return linhas.Err()
+}
+
+// Registro é uma linha da cadeia como o painel mostra. HashOK confere só a própria linha (conteúdo × hash);
+// a ligação entre linhas é conferida por Verificar.
+type Registro struct {
+	Seq        int64     `json:"seq"`
+	Evento     string    `json:"evento"`
+	Ator       string    `json:"ator"`
+	ConsultaID *string   `json:"consulta_id"`
+	CriadoEm   time.Time `json:"criado_em"`
+	HashOK     bool      `json:"hash_ok"`
+}
+
+// Listar devolve até limite registros do tenant, do mais novo para o mais velho, com seq < antesDe (0 = do fim).
+func Listar(ctx context.Context, q Consultor, tenantID string, antesDe int64, limite int) ([]Registro, error) {
+	linhas, err := q.Query(ctx, `SELECT seq, evento, ator, consulta_id, dados, hash_anterior, hash, criado_em
+		FROM auditoria WHERE tenant_id = $1 AND ($2 = 0 OR seq < $2) ORDER BY seq DESC LIMIT $3`, tenantID, antesDe, limite)
+	if err != nil {
+		return nil, fmt.Errorf("listar auditoria: %w", err)
+	}
+	defer linhas.Close()
+	itens := []Registro{}
+	for linhas.Next() {
+		var r Registro
+		var dados, anterior, hash []byte
+		if err := linhas.Scan(&r.Seq, &r.Evento, &r.Ator, &r.ConsultaID, &dados, &anterior, &hash, &r.CriadoEm); err != nil {
+			return nil, fmt.Errorf("ler registro de auditoria: %w", err)
+		}
+		if canon, err := canonico(dados); err == nil {
+			calculado, err := calcular(anterior, tenantID, r.Seq, r.Evento, r.Ator, r.ConsultaID, canon)
+			r.HashOK = err == nil && bytes.Equal(calculado, hash)
+		}
+		itens = append(itens, r)
+	}
+	return itens, linhas.Err()
 }
 
 // canonico normaliza o JSON (chaves em ordem, números preservados) para o hash não depender de como o
