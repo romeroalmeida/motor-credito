@@ -294,16 +294,18 @@ export interface paths {
           }
         }
         400: components['responses']['CorpoInvalido']
-        404: components['responses']['NaoEncontrado']
-        /** @description O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente) */
-        409: {
+        /**
+         * @description Convite inexistente, usado ou vencido — ou o e-mail do convite já tem conta. A resposta é a mesma de
+         *     propósito: o cadastro não revela quem tem conta.
+         */
+        404: {
           headers: {
             [name: string]: unknown
           }
           content: {
             /**
              * @example {
-             *       "erro": "conflito"
+             *       "erro": "nao_encontrado"
              *     }
              */
             'application/json': components['schemas']['Erro']

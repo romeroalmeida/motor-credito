@@ -56,6 +56,7 @@ func TestIntegracao(t *testing.T) {
 	t.Run("isolamento de tenant 404", a.testarIsolamento)
 	t.Run("chaves e IPs", a.testarChavesEIPs)
 	t.Run("convite e cadastro", a.testarConviteECadastro)
+	t.Run("cadastro não revela e-mail com conta", a.testarCadastroSemEnumeracao)
 	t.Run("sair", a.testarSair)
 }
 
@@ -441,4 +442,24 @@ func (a *ambiente) testarTravaTOTP(t *testing.T) {
 	}
 	a.exec(`UPDATE totp SET travado_ate = now() - interval '1 second' WHERE usuario_id = $1`, u.id)
 	quer(t, c.fazer("POST", "/painel/auth/2fa", `{"codigo":"`+a.codigo(u.segredo)+`"}`, true), 200, "")
+}
+
+// Convite (em outro tenant) para um e-mail que já tem conta: o cadastro responde igual a token inventado (achado 7).
+func (a *ambiente) testarCadastroSemEnumeracao(t *testing.T) {
+	a.semear(t, "ten_a", "ja.tem.conta@exemplo.com", PapelAnalista)
+	admin := a.entrar(t, a.semear(t, "ten_b", "admin.enum@exemplo.com", PapelAdmin))
+	w := admin.fazer("POST", "/painel/equipe", `{"email":"ja.tem.conta@exemplo.com","papel":"analista"}`, true)
+	quer(t, w, 201, "")
+	var cv conviteJSON
+	_ = json.Unmarshal(w.Body.Bytes(), &cv)
+	link, _ := url.Parse(cv.Link)
+
+	existente := a.novoCliente().fazer("POST", "/painel/auth/cadastro",
+		`{"token":"`+link.Query().Get("token")+`","nome":"X","senha":"`+senhaTeste+`"}`, false)
+	inventado := a.novoCliente().fazer("POST", "/painel/auth/cadastro",
+		`{"token":"inventado","nome":"X","senha":"`+senhaTeste+`"}`, false)
+	quer(t, existente, 404, "nao_encontrado")
+	if existente.Code != inventado.Code || existente.Body.String() != inventado.Body.String() {
+		t.Fatalf("respostas diferentes: %d %s / %d %s", existente.Code, existente.Body, inventado.Code, inventado.Body)
+	}
 }

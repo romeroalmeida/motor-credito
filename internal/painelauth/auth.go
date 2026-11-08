@@ -269,10 +269,9 @@ func (h *Handlers) cadastro(w http.ResponseWriter, r *http.Request) {
 	}
 	segredo, url, t, err := h.criarUsuarioDoConvite(r, cv, c.Nome, c.Senha)
 	switch {
-	case errors.Is(err, errConviteInvalido):
+	// E-mail que já tem conta responde igual a convite inválido: o cadastro não revela quem tem conta.
+	case errors.Is(err, errConviteInvalido), errors.Is(err, errEmailEmUso):
 		escreverErro(w, http.StatusNotFound, "nao_encontrado")
-	case errors.Is(err, errEmailEmUso):
-		escreverErro(w, http.StatusConflict, "conflito")
 	case err != nil:
 		falhaInterna(w, r, err)
 	default:

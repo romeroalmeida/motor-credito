@@ -190,13 +190,14 @@ paths:
                   otpauth_url: { type: string, description: "otpauth://totp/... para gerar o QR code" }
                   segredo_totp: { type: string, description: "Base32, para digitar à mão" }
         "400": { $ref: "#/components/responses/CorpoInvalido" }
-        "404": { $ref: "#/components/responses/NaoEncontrado" }
-        "409":
-          description: O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente)
+        "404":
+          description: |
+            Convite inexistente, usado ou vencido — ou o e-mail do convite já tem conta. A resposta é a mesma de
+            propósito: o cadastro não revela quem tem conta.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Erro" }
-              example: { erro: conflito }
+              example: { erro: nao_encontrado }
 
   /painel/auth/sair:
     post:
