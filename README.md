@@ -1,8 +1,9 @@
 # Motor de Crédito
 
 Uma empresa envia um CPF ou CNPJ e recebe, numa chamada síncrona, uma **decisão de crédito precificada**: score,
-faixa de risco, decisão (aprovado, negado, contraproposta ou documento inválido), oferta com valor, prazo, taxa e
-parcela, os motivos e o resultado do antifraude. Cada cliente escreve a própria política de crédito num painel,
+faixa de risco, decisão (aprovado, negado, contraproposta, pré-aprovado ou documento inválido), oferta com valor,
+prazo, taxa e parcela, o limite disponível, os motivos e o resultado do antifraude. Sem valor pedido, responde quanto
+está disponível para aquele cliente (pré-aprovação). Cada cliente escreve a própria política de crédito num painel,
 testa contra um documento de exemplo e publica uma versão nova sem deploy.
 
 Projeto de portfólio, desenhado para virar produto: as fontes de dados ficam atrás de uma interface, então trocar o
@@ -193,6 +194,8 @@ a resposta e o mesmo pedido em curl, Node e Python, que leem o segredo de `MOTOR
   determinístico, mas não substitui um bureau.
 - A velocidade entre clientes sai do Postgres (sem Redis). Compartilhar esse sinal entre clientes precisaria estar
   em contrato antes de virar produto.
+- Os limites de requisição e de login ficam na memória do processo: com mais de uma instância, precisam ir para
+  Redis ou Postgres.
 - Virar produto pode exigir contrato com bureaus e, conforme o modelo, autorização do Bacen.
 
 ## Próximos passos
@@ -201,6 +204,26 @@ a resposta e o mesmo pedido em curl, Node e Python, que leem o segredo de `MOTOR
 - Simular uma política nova sobre consultas antigas antes de publicar.
 - Bureaus reais (Serasa, Boa Vista, SCR) atrás da interface `Bureau`.
 - Provedores terceirizados por cliente: cada tenant escolhe e configura as próprias fontes e credenciais.
+
+## Como foi construído
+
+Projeto pessoal, feito do zero para estudar Go num problema real. **O código foi escrito por
+agentes de IA (Claude Code); a arquitetura, as decisões e a condução foram minhas.** O método é o que eu quis
+testar:
+
+1. **Desenho antes de código.** Requisitos, decisões e trade-offs discutidos e escritos em
+   [`docs/superpowers/specs/`](docs/superpowers/specs/) antes da primeira linha.
+2. **Contrato para paralelizar.** Um plano com interfaces Go exatas, dono de cada pasta e ondas de trabalho
+   ([`docs/superpowers/plans/`](docs/superpowers/plans/)). Quatro agentes trabalharam ao mesmo tempo, cada um no
+   próprio worktree, sem arquivo em comum, e os merges entraram sem conflito.
+3. **Quem escreve não confere.** Três conferências por agentes novos, sem histórico, acharam 23 problemas
+   (segurança, estouro numérico, corrida de idempotência). Outro agente corrigiu, e uma conferência final verificou
+   no código. Relatórios em [`docs/conferencias/`](docs/conferencias/).
+4. **Teste só vale se pega o erro.** Regras de dinheiro, motor, antifraude, HMAC e isolamento têm mutação manual
+   provada: a regra é quebrada de propósito e o teste precisa ficar vermelho.
+
+Em números: 85 commits, ~7,8 mil linhas de Go + ~5,6 mil de teste, 129 funções de teste em Go (com integração em
+Postgres real), 117 testes no painel, e2e com Playwright e a coleção Postman validada com newman.
 
 ## Licença
 
