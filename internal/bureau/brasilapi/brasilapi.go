@@ -1,5 +1,6 @@
 // Package brasilapi busca o cadastro público de CNPJ na BrasilAPI (https://brasilapi.com.br/docs#tag/CNPJ).
-// Só cadastro: nome, situação e abertura. Score e restrições não existem aqui (ver bureau.NovoComposto).
+// Só cadastro: nome, situação, abertura e os dados públicos que alimentam o score cadastral (bureau.Empresa).
+// Restrições não existem aqui (ver bureau.NovoComposto).
 package brasilapi
 
 import (
@@ -10,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,9 +39,15 @@ func Novo(base string) bureau.Bureau {
 }
 
 type resposta struct {
-	RazaoSocial         string `json:"razao_social"`
-	DescricaoSituacao   string `json:"descricao_situacao_cadastral"`
-	DataInicioAtividade string `json:"data_inicio_atividade"`
+	RazaoSocial         string            `json:"razao_social"`
+	DescricaoSituacao   string            `json:"descricao_situacao_cadastral"`
+	DataInicioAtividade string            `json:"data_inicio_atividade"`
+	CapitalSocial       json.Number       `json:"capital_social"` // reais, às vezes com centavos
+	CodigoPorte         int               `json:"codigo_porte"`
+	OpcaoSimples        bool              `json:"opcao_pelo_simples"`
+	OpcaoMEI            bool              `json:"opcao_pelo_mei"`
+	CodigoNatureza      int               `json:"codigo_natureza_juridica"`
+	QSA                 []json.RawMessage `json:"qsa"` // só contamos; os dados dos sócios não são lidos
 }
 
 func (c cliente) Consultar(ctx context.Context, doc string) (bureau.Resultado, error) {
@@ -87,7 +95,35 @@ func (c cliente) Consultar(ctx context.Context, doc string) (bureau.Resultado, e
 			return bureau.Resultado{}, indisponivel(fmt.Errorf("data_inicio_atividade: %w", err))
 		}
 	}
-	return bureau.Resultado{Nome: strings.TrimSpace(r.RazaoSocial), Situacao: situacao, Abertura: r.DataInicioAtividade}, nil
+	capital, err := centavos(r.CapitalSocial)
+	if err != nil {
+		return bureau.Resultado{}, indisponivel(fmt.Errorf("capital_social: %w", err))
+	}
+	return bureau.Resultado{
+		Nome: strings.TrimSpace(r.RazaoSocial), Situacao: situacao, Abertura: r.DataInicioAtividade,
+		Empresa: &bureau.Empresa{
+			CapitalSocial: capital, CodigoPorte: r.CodigoPorte, Simples: r.OpcaoSimples, MEI: r.OpcaoMEI,
+			Natureza: r.CodigoNatureza, Socios: len(r.QSA),
+		},
+		Fontes: bureau.Fontes{Cadastro: bureau.FonteBrasilAPI},
+	}, nil
+}
+
+// centavos converte o capital em reais ("1500", "1500.5", "1500.55") sem float; "" (ausente/null) = 0.
+// Casas além dos centavos são truncadas. Negativo, expoente ou estouro de int64 = erro (fail-closed).
+func centavos(n json.Number) (int64, error) {
+	s := n.String()
+	if s == "" {
+		return 0, nil
+	}
+	inteiro, frac, _ := strings.Cut(s, ".")
+	frac = (frac + "00")[:2]
+	r, err1 := strconv.ParseUint(inteiro, 10, 63)
+	c, err2 := strconv.ParseUint(frac, 10, 8)
+	if err1 != nil || err2 != nil || strings.ContainsAny(s, "eE+-") || r > (1<<63-1-99)/100 {
+		return 0, fmt.Errorf("valor %q fora do formato", s)
+	}
+	return int64(r*100 + c), nil
 }
 
 // situacoes: descricao_situacao_cadastral da Receita. Fora daqui vira indisponível (não decidimos no escuro).

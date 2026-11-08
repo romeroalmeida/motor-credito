@@ -27,13 +27,54 @@ type Resultado struct {
 	Nome                  string
 	Nascimento            string // AAAA-MM-DD
 	Situacao              Situacao
-	Renda                 *int64 // centavos/mês
-	Abertura              string // AAAA-MM-DD, data de início de atividade do CNPJ
+	Renda                 *int64   // centavos/mês
+	Abertura              string   // AAAA-MM-DD, data de início de atividade do CNPJ
+	Empresa               *Empresa // cadastro público do CNPJ (BrasilAPI); nil quando a fonte não traz
+	ScoreFatores          []Fator  // só quando o score é o cadastral; nil no simulado
+	Fontes                Fontes   // de onde veio cada parte; cada adaptador preenche a sua
+}
+
+// Fontes conta de onde veio cada parte do resultado (bloco `fontes` da resposta).
+type Fontes struct {
+	Cadastro   string `json:"cadastro"`   // FonteSerpro, FonteSerproTrial, FonteBrasilAPI, FonteSimulado ou FonteNaoVerificado
+	Score      string `json:"score"`      // FonteCadastral ou FonteSimulado
+	Restricoes string `json:"restricoes"` // sempre FonteSimulado: não há fonte grátis de restrições
+}
+
+// Nomes das fontes (enum do api/openapi.yaml).
+const (
+	FonteSimulado      = "simulado"
+	FonteSerpro        = "serpro"
+	FonteSerproTrial   = "serpro-trial"
+	FonteBrasilAPI     = "brasilapi"
+	FonteNaoVerificado = "nao_verificado"
+	FonteCadastral     = "cadastral"
+)
+
+// Empresa são os dados públicos do CNPJ que alimentam o score cadastral. Sócios: só a contagem, nunca quem são.
+type Empresa struct {
+	CapitalSocial int64 // centavos
+	CodigoPorte   int   // 1 micro, 3 pequeno porte, 5 demais, 0 não informado (Receita)
+	Simples, MEI  bool
+	Natureza      int // código da natureza jurídica (ex.: 2062 sociedade limitada)
+	Socios        int
+}
+
+// Fator é uma parcela explicável do score cadastral (ex.: TEMPO_EMPRESA_5A_MAIS +200).
+type Fator struct {
+	Codigo string `json:"codigo"`
+	Pontos int    `json:"pontos"`
 }
 
 // Bureau consulta um documento já normalizado.
 type Bureau interface {
 	Consultar(ctx context.Context, doc string) (Resultado, error)
+}
+
+// ComNascimento é implementado pelo bureau que usa o nascimento informado (o Serpro exige para consultar CPF).
+// A orquestração prefere esta forma quando existe; nascimento "" = não informado.
+type ComNascimento interface {
+	ConsultarComNascimento(ctx context.Context, doc, nascimento string) (Resultado, error)
 }
 
 // ErrIndisponivel indica falha ou timeout do bureau; a decisão vira BUREAU_INDISPONIVEL.

@@ -64,10 +64,12 @@ func (s simulado) Consultar(ctx context.Context, doc string) (Resultado, error) 
 	if doc == CPFIndisponivel {
 		return Resultado{}, indisponivel(errors.New("fixture de indisponibilidade"))
 	}
-	if r, ok := fixtures[doc]; ok {
-		return r, nil
+	r, ok := fixtures[doc]
+	if !ok {
+		r = derivado(doc, tipo)
 	}
-	return derivado(doc, tipo), nil
+	r.Fontes = Fontes{Cadastro: FonteSimulado, Score: FonteSimulado, Restricoes: FonteSimulado}
+	return r, nil
 }
 
 func esperar(ctx context.Context, d time.Duration) error {

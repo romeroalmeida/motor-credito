@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -118,11 +119,7 @@ func TestAtrasoAplicado(t *testing.T) {
 	}
 }
 
-func iguais(a, b Resultado) bool {
-	ra, rb := a.Renda, b.Renda
-	a.Renda, b.Renda = nil, nil
-	return a == b && (ra == nil) == (rb == nil) && (ra == nil || *ra == *rb)
-}
+func iguais(a, b Resultado) bool { return reflect.DeepEqual(a, b) }
 
 // cpfValido completa 9 dígitos com os dois verificadores.
 func cpfValido(base string) string {

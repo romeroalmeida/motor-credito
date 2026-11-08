@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
 	"github.com/romeroalmeida/motor-credito/internal/bureau/brasilapi"
+	"github.com/romeroalmeida/motor-credito/internal/bureau/serpro"
 	"github.com/romeroalmeida/motor-credito/internal/consulta"
 	"github.com/romeroalmeida/motor-credito/internal/httpapi"
 	"github.com/romeroalmeida/motor-credito/internal/painelauth"
@@ -47,7 +49,7 @@ func rodar() error {
 	if err := migrarBanco(ctx, cfg.DatabaseURLMigracao); err != nil {
 		return err
 	}
-	fonte, err := montarBureau(os.Getenv("BUREAU_CNPJ"))
+	fonte, err := montarBureau(os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -96,17 +98,39 @@ func rodar() error {
 	return nil
 }
 
-// montarBureau lê BUREAU_CNPJ: vazio ou "simulado" = só o simulado; "brasilapi" = cadastro real de CNPJ na
-// BrasilAPI e o resto do simulado. Valor desconhecido impede subir (um erro de digitação não troca a fonte calado).
-func montarBureau(cnpj string) (bureau.Bureau, error) {
+// montarBureau escolhe as fontes de cadastro; score e restrições do CPF vêm sempre do simulado.
+//   - BUREAU_CNPJ: vazio/"simulado" ou "brasilapi" (cadastro e score cadastral do CNPJ pela BrasilAPI).
+//   - BUREAU_CPF: vazio/"simulado", "serpro-trial" (SERPRO_URL/SERPRO_CHAVE opcionais, padrão o trial público)
+//     ou "serpro" (produção: SERPRO_URL e SERPRO_CHAVE obrigatórias).
+//
+// Valor desconhecido ou credencial faltando impede subir (um erro de digitação não troca a fonte calado).
+func montarBureau(env func(string) string) (bureau.Bureau, error) {
 	simulado := bureau.NovoSimulado(atrasoBureau)
-	switch strings.TrimSpace(cnpj) {
+	var cpf, cnpj bureau.Bureau
+	switch v := strings.TrimSpace(env("BUREAU_CNPJ")); v {
 	case "", "simulado":
-		return simulado, nil
 	case "brasilapi":
-		return bureau.NovoComposto(brasilapi.Novo(""), simulado), nil
+		cnpj = brasilapi.Novo("")
+	default:
+		return nil, fmt.Errorf("BUREAU_CNPJ=%q desconhecido (use simulado ou brasilapi)", v)
 	}
-	return nil, fmt.Errorf("BUREAU_CNPJ=%q desconhecido (use simulado ou brasilapi)", cnpj)
+	url, chave := strings.TrimSpace(env("SERPRO_URL")), strings.TrimSpace(env("SERPRO_CHAVE"))
+	switch v := strings.TrimSpace(env("BUREAU_CPF")); v {
+	case "", "simulado":
+	case "serpro-trial":
+		cpf = serpro.Novo(cmp.Or(url, serpro.URLTrial), cmp.Or(chave, serpro.ChaveTrial), true)
+	case "serpro":
+		if url == "" || chave == "" {
+			return nil, errors.New("BUREAU_CPF=serpro exige SERPRO_URL e SERPRO_CHAVE")
+		}
+		cpf = serpro.Novo(url, chave, false)
+	default:
+		return nil, fmt.Errorf("BUREAU_CPF=%q desconhecido (use simulado, serpro-trial ou serpro)", v)
+	}
+	if cpf == nil && cnpj == nil {
+		return simulado, nil
+	}
+	return bureau.NovoComposto(cpf, cnpj, simulado), nil
 }
 
 // migrarBanco usa o dono das tabelas só para migrar e fecha a conexão; vazio = não migra.

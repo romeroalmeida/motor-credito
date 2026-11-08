@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +49,12 @@ func TestRespostaReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quer := bureau.Resultado{Nome: "BANCO DO BRASIL SA", Situacao: bureau.Regular, Abertura: "1966-08-01"}
-	if r != quer {
+	quer := bureau.Resultado{
+		Nome: "BANCO DO BRASIL SA", Situacao: bureau.Regular, Abertura: "1966-08-01",
+		Empresa: &bureau.Empresa{CapitalSocial: 120000000000_00, CodigoPorte: 5, Natureza: 2038},
+		Fontes:  bureau.Fontes{Cadastro: bureau.FonteBrasilAPI},
+	}
+	if !reflect.DeepEqual(r, quer) {
 		t.Fatalf("resultado %+v, quer %+v", r, quer)
 	}
 	if caminho != "/"+cnpjBB || ua != userAgent {
@@ -81,9 +86,30 @@ func TestSituacoes(t *testing.T) {
 	}
 }
 
+// Dados do score cadastral: sócios só contados, capital em centavos sem float, null vira ausente.
+func TestEmpresa(t *testing.T) {
+	casos := []struct {
+		corpo string
+		quer  bureau.Empresa
+	}{
+		{`"capital_social":1500.5,"codigo_porte":1,"opcao_pelo_simples":true,"opcao_pelo_mei":true,"codigo_natureza_juridica":2135,"qsa":[{"nome_socio":"X"}]`,
+			bureau.Empresa{CapitalSocial: 1500_50, CodigoPorte: 1, Simples: true, MEI: true, Natureza: 2135, Socios: 1}},
+		{`"capital_social":0.999,"qsa":[{},{},{}]`, bureau.Empresa{CapitalSocial: 99, Socios: 3}},
+		{`"capital_social":null,"codigo_porte":null,"opcao_pelo_simples":null,"qsa":null`, bureau.Empresa{}},
+		{`"capital_social":92233720368547757.99`, bureau.Empresa{CapitalSocial: 9223372036854775799}},
+	}
+	for _, c := range casos {
+		corpo := `{"descricao_situacao_cadastral":"ATIVA",` + c.corpo + `}`
+		r, err := servidor(t, responde(http.StatusOK, corpo)).Consultar(context.Background(), cnpjBB)
+		if err != nil || r.Empresa == nil || *r.Empresa != c.quer {
+			t.Errorf("%s: empresa %+v, erro %v; quer %+v", c.corpo, r.Empresa, err, c.quer)
+		}
+	}
+}
+
 func TestNaoEncontrado(t *testing.T) {
 	r, err := servidor(t, responde(http.StatusNotFound, `{"message":"CNPJ não encontrado"}`)).Consultar(context.Background(), cnpjBB)
-	if err != nil || r != (bureau.Resultado{Situacao: bureau.Inexistente}) {
+	if err != nil || !reflect.DeepEqual(r, bureau.Resultado{Situacao: bureau.Inexistente}) {
 		t.Fatalf("resultado %+v, erro %v", r, err)
 	}
 }
@@ -103,11 +129,14 @@ func TestFailClosed(t *testing.T) {
 		{"situação ausente", responde(http.StatusOK, `{"razao_social":"X"}`)},
 		{"data inválida", responde(http.StatusOK, `{"razao_social":"X","descricao_situacao_cadastral":"ATIVA","data_inicio_atividade":"01/08/1966"}`)},
 		{"corpo gigante", responde(http.StatusOK, gigante)},
+		{"capital negativo", responde(http.StatusOK, `{"descricao_situacao_cadastral":"ATIVA","capital_social":-1}`)},
+		{"capital com expoente", responde(http.StatusOK, `{"descricao_situacao_cadastral":"ATIVA","capital_social":1.5e3}`)},
+		{"capital estoura int64", responde(http.StatusOK, `{"descricao_situacao_cadastral":"ATIVA","capital_social":92233720368547758}`)},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
 			r, err := servidor(t, c.h).Consultar(context.Background(), cnpjBB)
-			if !errors.Is(err, bureau.ErrIndisponivel) || r != (bureau.Resultado{}) {
+			if !errors.Is(err, bureau.ErrIndisponivel) || !reflect.DeepEqual(r, bureau.Resultado{}) {
 				t.Fatalf("resultado %+v, erro %v; quer ErrIndisponivel", r, err)
 			}
 		})

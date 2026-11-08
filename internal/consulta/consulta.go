@@ -75,7 +75,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 
 	ctxFontes, cancelar := context.WithTimeout(ctx, s.timeout)
 	defer cancelar()
-	b, err := s.bureau.Consultar(ctxFontes, doc)
+	b, err := bureau.Consultar(ctxFontes, s.bureau, doc, req.Dados.Nascimento)
 	if errors.Is(err, documento.ErrInvalido) {
 		return documentoInvalido(av)
 	}
