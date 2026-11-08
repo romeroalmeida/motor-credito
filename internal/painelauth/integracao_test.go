@@ -257,6 +257,14 @@ func (a *ambiente) testarLimiteLogin(t *testing.T) {
 		t.Fatal("429 sem Retry-After")
 	}
 	quer(t, a.novoCliente().fazer("POST", "/painel/auth/entrar", certo, false), 200, "") // outro IP: chave é e-mail+IP
+
+	// Spray: o mesmo IP tentando e-mails diferentes esbarra no limite por IP, antes de qualquer argon2.
+	spray := a.novoCliente()
+	for i := 0; i < limiteEntrarIP; i++ {
+		w := spray.fazer("POST", "/painel/auth/entrar", fmt.Sprintf(`{"email":"spray%d@exemplo.com","senha":"x"}`, i), false)
+		quer(t, w, 401, "nao_autorizado")
+	}
+	quer(t, spray.fazer("POST", "/painel/auth/entrar", certo, false), 429, "limite_excedido")
 }
 
 func (a *ambiente) testarCSRF(t *testing.T) {

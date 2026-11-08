@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,25 @@ func TestLimitadorJanela(t *testing.T) {
 	}
 	if ok, _ := l.Permitir("outro", 2, time.Minute, t0.Add(59*time.Second)); !ok {
 		t.Fatal("chaves diferentes não podem dividir a janela")
+	}
+}
+
+// Acima de limpezaAcima chaves vivas, a varredura roda no máximo uma vez por janela, não a cada chamada (achado 5).
+func TestLimitadorLimpaNoMaximoUmaVezPorJanela(t *testing.T) {
+	l := NovoLimitador()
+	t0 := time.Unix(1_000_000, 0)
+	for i := range limpezaAcima + 1 {
+		l.Permitir(strconv.Itoa(i), 5, time.Minute, t0)
+	}
+	for i := range 1000 {
+		l.Permitir("x"+strconv.Itoa(i), 5, time.Minute, t0.Add(time.Second))
+	}
+	if l.limpezas != 1 {
+		t.Fatalf("limpezas = %d na mesma janela; quer 1", l.limpezas)
+	}
+	l.Permitir("depois", 5, time.Minute, t0.Add(2*time.Minute))
+	if l.limpezas != 2 || len(l.janelas) != 1 {
+		t.Fatalf("janela seguinte: limpezas = %d, janelas = %d; quer 2 e 1", l.limpezas, len(l.janelas))
 	}
 }
 

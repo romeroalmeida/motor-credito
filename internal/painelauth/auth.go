@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	limiteEntrar = 10 // tentativas de senha por e-mail+IP por janela
-	limite2FA    = 5  // códigos TOTP por usuário por janela
-	janelaLimite = 15 * time.Minute
+	limiteEntrar   = 10 // tentativas de senha por e-mail+IP por janela
+	limiteEntrarIP = 30 // tentativas de senha por IP por janela, qualquer e-mail (barra spray antes do argon2)
+	limite2FA      = 5  // códigos TOTP por usuário por janela
+	janelaLimite   = 15 * time.Minute
 
 	minSenha, maxSenha = 12, 128
 	maxNome            = 120
@@ -58,7 +59,7 @@ func (h *Handlers) entrar(w http.ResponseWriter, r *http.Request) {
 		erroCampos(w, map[string]string{"email": "obrigatório", "senha": "obrigatória"})
 		return
 	}
-	if !h.permitir(w, "entrar|"+email+"|"+ipTexto(r), limiteEntrar) {
+	if !h.permitir(w, "entrar-ip|"+ipTexto(r), limiteEntrarIP) || !h.permitir(w, "entrar|"+email+"|"+ipTexto(r), limiteEntrar) {
 		return
 	}
 	usuarioID, tenantID, ok, err := h.conferirCredenciais(r.Context(), email, c.Senha)
