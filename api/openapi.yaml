@@ -179,6 +179,12 @@ paths:
                   segredo_totp: { type: string, description: "Base32, para digitar à mão" }
         "400": { $ref: "#/components/responses/CorpoInvalido" }
         "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409":
+          description: O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Erro" }
+              example: { erro: conflito }
 
   /painel/auth/sair:
     post:
@@ -402,6 +408,7 @@ paths:
     get:
       tags: [politica]
       summary: Política do tenant (rascunho + versão publicada)
+      description: No primeiro acesso cria o rascunho a partir do modelo Empréstimo PF (ainda não publicado).
       responses:
         "200":
           description: Ok
@@ -428,6 +435,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PoliticaEstado" }
         "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "413": { $ref: "#/components/responses/CorpoGrande" }
         "401": { $ref: "#/components/responses/NaoAutorizado" }
         "403": { $ref: "#/components/responses/Proibido" }
 
@@ -517,6 +525,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PoliticaVersao" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
         "401": { $ref: "#/components/responses/NaoAutorizado" }
         "403": { $ref: "#/components/responses/Proibido" }
         "404": { $ref: "#/components/responses/NaoEncontrado" }
@@ -543,9 +552,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PoliticaVersao" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
         "401": { $ref: "#/components/responses/NaoAutorizado" }
         "403": { $ref: "#/components/responses/Proibido" }
         "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "422": { $ref: "#/components/responses/PoliticaInvalida" }
 
   /painel/politicas/diferenca:
     get:
@@ -742,7 +753,12 @@ components:
       type: object
       required: [codigo, texto]
       properties:
-        codigo: { type: string, examples: [LIMITE_FAIXA, SEM_FAIXA, BUREAU_INDISPONIVEL, DOCUMENTO_INVALIDO] }
+        codigo:
+          type: string
+          examples: [LIMITE_FAIXA, SEM_FAIXA, FAIXA_NEGADA, BUREAU_INDISPONIVEL, DOCUMENTO_INVALIDO, ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL, ERRO_POLITICA]
+          description: |
+            Os de corte vêm da política. Falhas sempre negam: BUREAU_INDISPONIVEL (erro ou > 2s),
+            ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL (nenhuma versão publicada), ERRO_POLITICA (avaliação falhou).
         texto: { type: string }
 
     Antifraude:
@@ -808,8 +824,8 @@ components:
       required: [id, documento_mascarado, status, pedido, criado_em]
       properties:
         id: { type: string }
-        documento_mascarado: { type: string, examples: ["***.456.789-**"] }
-        tipo_documento: { type: string, enum: [cpf, cnpj] }
+        documento_mascarado: { type: string, examples: ["***.456.789-**"], description: '"***" quando o documento era inválido (não é guardado)' }
+        tipo_documento: { type: [string, "null"], enum: [cpf, cnpj, null] }
         status: { $ref: "#/components/schemas/StatusDecisao" }
         score: { type: [integer, "null"] }
         faixa_risco: { type: [string, "null"] }
@@ -829,7 +845,7 @@ components:
           required: [documento_mascarado, trilha, dados_informados, finalidade, base_legal]
           properties:
             documento_mascarado: { type: string }
-            tipo_documento: { type: string, enum: [cpf, cnpj] }
+            tipo_documento: { type: [string, "null"], enum: [cpf, cnpj, null] }
             finalidade: { type: string }
             base_legal: { type: string }
             dados_informados:
