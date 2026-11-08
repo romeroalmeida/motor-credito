@@ -17,6 +17,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/argon2"
 
+	"github.com/romeroalmeida/motor-credito/internal/painelauth"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 	"github.com/romeroalmeida/motor-credito/internal/politica"
 	"github.com/romeroalmeida/motor-credito/internal/repositorio"
@@ -58,12 +59,14 @@ func rodar() error {
 	fmt.Printf("admin:         %s\n", emailAdmin)
 	fmt.Printf("senha:         %s\n", d.senha)
 	fmt.Printf("segredo TOTP:  %s\n", d.segredoTOTP)
+	// chave de API vai no Authorization: Bearer; o segredo só assina (X-Assinatura) e nunca vai em cabeçalho.
 	fmt.Printf("chave de API:  %s\n", d.chaveAPI)
+	fmt.Printf("segredo API:   %s\n", d.segredoAPI)
 	return nil
 }
 
 // demo é o que a semente imprime (segredos só no terminal de quem rodou).
-type demo struct{ tenantID, senha, segredoTOTP, chaveAPI string }
+type demo struct{ tenantID, senha, segredoTOTP, chaveAPI, segredoAPI string }
 
 // Permitida aplica as duas travas.
 func Permitida(seedDemo string, cfg plataforma.Config) bool {
@@ -93,40 +96,42 @@ func semear(ctx context.Context, pool *pgxpool.Pool, chaveCifra []byte) (demo, e
 			return demo{}, err
 		}
 	}
-	chave, err := tenant.NovoServico(pool).CriarChaveComNome(ctx, tenantID, "demo")
+	chave, err := tenant.NovoServico(pool, chaveCifra).CriarChaveComNome(ctx, tenantID, "demo", "sistema:semente")
 	if err != nil {
 		return demo{}, err
 	}
-	return demo{tenantID: tenantID, senha: senha, segredoTOTP: segredo, chaveAPI: chave.Segredo}, nil
+	return demo{tenantID: tenantID, senha: senha, segredoTOTP: segredo, chaveAPI: chave.Chave, segredoAPI: chave.Segredo}, nil
 }
 
 // garantirAdmin cria tenant + admin + TOTP confirmado, ou reaproveita os existentes trocando a senha.
+// TOTP ausente ou ilegível (ex.: cifrado no formato antigo, sem AAD) é trocado por um novo.
 func garantirAdmin(ctx context.Context, pool *pgxpool.Pool, chaveCifra []byte, hash string) (usuarioID, tenantID, segredo string, err error) {
 	var cifrado []byte
 	err = pool.QueryRow(ctx, `SELECT u.id, a.tenant_id, t.segredo_cifrado FROM usuarios u
-		JOIN totp t ON t.usuario_id = u.id, auth_associacoes(u.id) a WHERE lower(u.email) = $1 LIMIT 1`, emailAdmin).
+		LEFT JOIN totp t ON t.usuario_id = u.id, auth_associacoes(u.id) a WHERE lower(u.email) = $1 LIMIT 1`, emailAdmin).
 		Scan(&usuarioID, &tenantID, &cifrado)
 	if err == nil {
-		claro, err := plataforma.Decifrar(chaveCifra, cifrado)
-		if err != nil {
-			return "", "", "", fmt.Errorf("decifrar TOTP do admin demo: %w", err)
+		if _, err = pool.Exec(ctx, `UPDATE usuarios SET senha_hash = $2 WHERE id = $1`, usuarioID, hash); err != nil {
+			return "", "", "", err
 		}
-		_, err = pool.Exec(ctx, `UPDATE usuarios SET senha_hash = $2 WHERE id = $1`, usuarioID, hash)
-		return usuarioID, tenantID, string(claro), err
+		if segredo, err = painelauth.DecifrarTOTP(chaveCifra, usuarioID, cifrado); err == nil {
+			return usuarioID, tenantID, segredo, nil
+		}
+		if segredo, cifrado, err = novoTOTP(chaveCifra, usuarioID); err != nil {
+			return "", "", "", err
+		}
+		_, err = pool.Exec(ctx, `INSERT INTO totp (usuario_id, segredo_cifrado, confirmado_em) VALUES ($1, $2, now())
+			ON CONFLICT (usuario_id) DO UPDATE SET segredo_cifrado = $2, confirmado_em = now(), ultimo_passo = 0`, usuarioID, cifrado)
+		return usuarioID, tenantID, segredo, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", err
 	}
 
-	chave, err := totp.Generate(totp.GenerateOpts{Issuer: "Motor de Crédito", AccountName: emailAdmin})
-	if err != nil {
-		return "", "", "", err
-	}
-	segredo = chave.Secret()
-	if cifrado, err = plataforma.Cifrar(chaveCifra, []byte(segredo)); err != nil {
-		return "", "", "", err
-	}
 	usuarioID, tenantID = plataforma.NovoID("usr"), plataforma.NovoID("ten")
+	if segredo, cifrado, err = novoTOTP(chaveCifra, usuarioID); err != nil {
+		return "", "", "", err
+	}
 	err = tenant.EmTenant(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		for _, q := range []struct {
 			sql  string
@@ -144,6 +149,15 @@ func garantirAdmin(ctx context.Context, pool *pgxpool.Pool, chaveCifra []byte, h
 		return nil
 	})
 	return usuarioID, tenantID, segredo, err
+}
+
+func novoTOTP(chaveCifra []byte, usuarioID string) (segredo string, cifrado []byte, err error) {
+	chave, err := totp.Generate(totp.GenerateOpts{Issuer: "Motor de Crédito", AccountName: emailAdmin})
+	if err != nil {
+		return "", nil, err
+	}
+	cifrado, err = painelauth.CifrarTOTP(chaveCifra, usuarioID, chave.Secret())
+	return chave.Secret(), cifrado, err
 }
 
 func aleatorio(n int) (string, error) {

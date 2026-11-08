@@ -50,8 +50,11 @@ func rodar() error {
 		return err
 	}
 	defer pool.Close()
+	if err := conferirPapelDaApp(ctx, pool); err != nil {
+		return err
+	}
 
-	tenants := tenant.NovoServico(pool)
+	tenants := tenant.NovoServico(pool, cfg.ChaveCifraDoc)
 	auth := painelauth.Novo(pool, tenants, painelauth.Opcoes{
 		ChaveCifra:     cfg.ChaveCifraDoc,
 		CookieInseguro: painelauth.CookieInseguroPermitido(os.Getenv("COOKIE_INSEGURO_DEV"), cfg.Ambiente),
@@ -60,7 +63,7 @@ func rodar() error {
 	srv := &http.Server{
 		Addr: ":" + cfg.Porta,
 		Handler: httpapi.Novo(httpapi.Deps{
-			Pool: pool, Tenants: tenants, Auth: auth,
+			Pool: pool, Tenants: tenants, Auth: auth, ProxiesConfiaveis: cfg.ProxiesConfiaveis,
 			Consultas: consulta.Novo(pool, bureau.NovoSimulado(atrasoBureau), cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

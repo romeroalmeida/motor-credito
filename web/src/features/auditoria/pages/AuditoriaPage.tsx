@@ -17,6 +17,18 @@ import type { RegistroAuditoria } from '../services/auditoriaService'
 const ROTULO_EVENTO: Record<string, string> = {
   'consulta.decidida': 'Consulta decidida',
   'politica.publicada': 'Política publicada',
+  'chave.criada': 'Chave de API criada',
+  'chave.girada': 'Chave de API girada',
+  'chave.revogada': 'Chave de API revogada',
+  'chave.ips_alterados': 'IPs permitidos alterados',
+  'equipe.convite_criado': 'Convite criado',
+  'equipe.convite_aceito': 'Convite aceito',
+  'equipe.membro_removido': 'Membro removido',
+  'equipe.papel_alterado': 'Papel alterado',
+  'auth.entrou': 'Entrou no painel',
+  'auth.falhou': 'Senha errada',
+  'auth.2fa_falhou': 'Código 2FA errado',
+  'auth.saiu': 'Saiu do painel',
 }
 
 export function AuditoriaPage() {
@@ -28,7 +40,7 @@ export function AuditoriaPage() {
     <>
       <CabecalhoPagina
         titulo="Auditoria"
-        descricao="Cada decisão e cada publicação de política, encadeadas por hash. Só leitura: ninguém altera um registro sem quebrar a cadeia."
+        descricao="Decisões, publicações de política, chaves, equipe e acessos, encadeados por hash. Só leitura: ninguém altera um registro sem quebrar a cadeia."
         acoes={
           <Button variant="outline" onClick={() => integridade.refetch()} disabled={integridade.isFetching}>
             <ShieldCheck aria-hidden="true" />

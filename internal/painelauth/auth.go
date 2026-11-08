@@ -2,7 +2,9 @@ package painelauth
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,14 +14,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/romeroalmeida/motor-credito/internal/auditoria"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 	"github.com/romeroalmeida/motor-credito/internal/tenant"
 )
 
 const (
-	limiteEntrar = 10 // tentativas de senha por e-mail+IP por janela
-	limite2FA    = 5  // códigos TOTP por usuário por janela
-	janelaLimite = 15 * time.Minute
+	limiteEntrar   = 10 // tentativas de senha por e-mail+IP por janela
+	limiteEntrarIP = 30 // tentativas de senha por IP por janela, qualquer e-mail (barra spray antes do argon2)
+	limite2FA      = 5  // códigos TOTP por usuário por janela (em memória, por processo)
+	maxFalhasTOTP  = 5  // falhas seguidas de TOTP que travam o 2FA do usuário no banco (vale entre processos)
+	travaTOTP      = 15 * time.Minute
+	janelaLimite   = 15 * time.Minute
 
 	minSenha, maxSenha = 12, 128
 	maxNome            = 120
@@ -27,6 +33,7 @@ const (
 
 var (
 	errCodigoRecusado  = errors.New("código TOTP recusado")
+	errTOTPTravado     = errors.New("2FA travado por excesso de falhas")
 	errConviteInvalido = errors.New("convite inexistente, usado ou vencido")
 	errEmailEmUso      = errors.New("e-mail já cadastrado")
 )
@@ -58,7 +65,7 @@ func (h *Handlers) entrar(w http.ResponseWriter, r *http.Request) {
 		erroCampos(w, map[string]string{"email": "obrigatório", "senha": "obrigatória"})
 		return
 	}
-	if !h.permitir(w, "entrar|"+email+"|"+ipTexto(r), limiteEntrar) {
+	if !h.permitir(w, "entrar-ip|"+ipTexto(r), limiteEntrarIP) || !h.permitir(w, "entrar|"+email+"|"+ipTexto(r), limiteEntrar) {
 		return
 	}
 	usuarioID, tenantID, ok, err := h.conferirCredenciais(r.Context(), email, c.Senha)
@@ -67,6 +74,10 @@ func (h *Handlers) entrar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
+		if err := h.auditarFalhaLogin(r, email, usuarioID, tenantID); err != nil {
+			falhaInterna(w, r, err)
+			return
+		}
 		escreverErro(w, http.StatusUnauthorized, "nao_autorizado")
 		return
 	}
@@ -83,7 +94,8 @@ func (h *Handlers) entrar(w http.ResponseWriter, r *http.Request) {
 	responder(w, http.StatusOK, map[string]string{"proximo": "2fa"})
 }
 
-// conferirCredenciais devolve o usuário e o primeiro tenant dele.
+// conferirCredenciais devolve o usuário e o primeiro tenant dele; ok só com senha certa e algum tenant.
+// Com senha errada, usuarioID/tenantID ainda vêm preenchidos (quando existem) para a auditoria da falha.
 // shortcut: usuário em vários tenants entra sempre no mais antigo; troca de tenant fica para quando houver caso real.
 func (h *Handlers) conferirCredenciais(ctx context.Context, email, senha string) (usuarioID, tenantID string, ok bool, err error) {
 	var hash string
@@ -92,14 +104,28 @@ func (h *Handlers) conferirCredenciais(ctx context.Context, email, senha string)
 		conferirSenha(senha, hashFicticio())
 		return "", "", false, nil
 	}
-	if err != nil || !conferirSenha(senha, hash) {
+	if err != nil {
 		return "", "", false, err
 	}
+	senhaOK := conferirSenha(senha, hash)
 	err = h.pool.QueryRow(ctx, `SELECT tenant_id FROM auth_associacoes($1) LIMIT 1`, usuarioID).Scan(&tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", false, nil
+		return usuarioID, "", false, nil
 	}
-	return usuarioID, tenantID, err == nil, err
+	return usuarioID, tenantID, err == nil && senhaOK, err
+}
+
+// auditarFalhaLogin grava auth.falhou na cadeia do tenant do usuário. E-mail sem conta (ou sem tenant) não tem
+// cadeia: vai só para o log, como hash — o e-mail nunca aparece em claro.
+func (h *Handlers) auditarFalhaLogin(r *http.Request, email, usuarioID, tenantID string) error {
+	if tenantID == "" {
+		slog.InfoContext(r.Context(), "login recusado sem tenant", "email_sha256", hex.EncodeToString(hashToken(email))[:16])
+		return nil
+	}
+	return tenant.EmTenant(r.Context(), h.pool, tenantID, func(tx pgx.Tx) error {
+		return auditoria.Registrar(r.Context(), tx, tenantID, auditoria.EventoLoginFalhou, auditoria.AtorUsuario(usuarioID),
+			nil, map[string]string{"ip": ipTexto(r)})
+	})
 }
 
 // doisFatores confere o TOTP da sessão pendente e troca por uma sessão completa (cookie novo).
@@ -117,6 +143,13 @@ func (h *Handlers) doisFatores(w http.ResponseWriter, r *http.Request) {
 	var t tokensSessao
 	var eu respostaEu
 	err := tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
+		var travadoAte *time.Time
+		if err := tx.QueryRow(r.Context(), `SELECT travado_ate FROM totp WHERE usuario_id = $1 AND travado_ate > now()`,
+			s.UsuarioID).Scan(&travadoAte); err == nil {
+			return errTOTPTravado
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 		if err := h.consumirCodigo(r.Context(), tx, s.UsuarioID, c.Codigo); err != nil {
 			return err
 		}
@@ -128,10 +161,22 @@ func (h *Handlers) doisFatores(w http.ResponseWriter, r *http.Request) {
 		if t, err = criarSessao(r.Context(), tx, r, s.UsuarioID, s.TenantID, true); err != nil {
 			return err
 		}
-		eu, err = carregarEu(r.Context(), tx, s.Sessao)
-		return err
+		if eu, err = carregarEu(r.Context(), tx, s.Sessao); err != nil {
+			return err
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoLoginOK, auditoria.AtorUsuario(s.UsuarioID),
+			nil, map[string]string{"ip": ipTexto(r)})
 	})
+	if errors.Is(err, errTOTPTravado) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(travaTOTP.Seconds())))
+		escreverErro(w, http.StatusTooManyRequests, "limite_excedido")
+		return
+	}
 	if errors.Is(err, errCodigoRecusado) {
+		if err := h.registrarFalhaTOTP(r, s.Sessao); err != nil {
+			falhaInterna(w, r, err)
+			return
+		}
 		escreverErro(w, http.StatusUnauthorized, "nao_autorizado")
 		return
 	}
@@ -154,20 +199,35 @@ func (h *Handlers) consumirCodigo(ctx context.Context, tx pgx.Tx, usuarioID, cod
 	if err != nil {
 		return err
 	}
-	segredo, err := plataforma.Decifrar(h.opcoes.ChaveCifra, cifrado)
+	segredo, err := DecifrarTOTP(h.opcoes.ChaveCifra, usuarioID, cifrado)
 	if err != nil {
 		return err
 	}
-	passo, ok := passoDoCodigo(string(segredo), codigo, h.agora())
+	passo, ok := passoDoCodigo(segredo, codigo, h.agora())
 	if !ok {
 		return errCodigoRecusado
 	}
-	tag, err := tx.Exec(ctx, `UPDATE totp SET ultimo_passo = $2, confirmado_em = coalesce(confirmado_em, now())
+	tag, err := tx.Exec(ctx, `UPDATE totp SET ultimo_passo = $2, confirmado_em = coalesce(confirmado_em, now()), falhas = 0
 		WHERE usuario_id = $1 AND ultimo_passo < $2`, usuarioID, passo)
 	if err == nil && tag.RowsAffected() == 0 {
 		return errCodigoRecusado
 	}
 	return err
+}
+
+// registrarFalhaTOTP conta a falha fora da transação do 2FA (que desfaz), trava o 2FA na maxFalhasTOTP-ésima e
+// grava auth.2fa_falhou na auditoria.
+func (h *Handlers) registrarFalhaTOTP(r *http.Request, s Sessao) error {
+	return tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `UPDATE totp SET
+				travado_ate = CASE WHEN falhas + 1 >= $2 THEN now() + make_interval(secs => $3) ELSE travado_ate END,
+				falhas = CASE WHEN falhas + 1 >= $2 THEN 0 ELSE falhas + 1 END
+			WHERE usuario_id = $1`, s.UsuarioID, maxFalhasTOTP, travaTOTP.Seconds()); err != nil {
+			return err
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoDoisFatoresFalhou, auditoria.AtorUsuario(s.UsuarioID),
+			nil, map[string]string{"ip": ipTexto(r)})
+	})
 }
 
 func carregarEu(ctx context.Context, tx pgx.Tx, s Sessao) (respostaEu, error) {
@@ -197,8 +257,10 @@ func (h *Handlers) eu(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) sair(w http.ResponseWriter, r *http.Request) {
 	s, _ := sessaoInterna(r.Context())
 	err := tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(r.Context(), `UPDATE sessoes SET encerrada_em = now() WHERE id = $1 AND tenant_id = $2`, s.id, s.TenantID)
-		return err
+		if _, err := tx.Exec(r.Context(), `UPDATE sessoes SET encerrada_em = now() WHERE id = $1 AND tenant_id = $2`, s.id, s.TenantID); err != nil {
+			return err
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoSaiu, auditoria.AtorUsuario(s.UsuarioID), nil, map[string]string{})
 	})
 	if err != nil {
 		falhaInterna(w, r, err)
@@ -239,10 +301,9 @@ func (h *Handlers) cadastro(w http.ResponseWriter, r *http.Request) {
 	}
 	segredo, url, t, err := h.criarUsuarioDoConvite(r, cv, c.Nome, c.Senha)
 	switch {
-	case errors.Is(err, errConviteInvalido):
+	// E-mail que já tem conta responde igual a convite inválido: o cadastro não revela quem tem conta.
+	case errors.Is(err, errConviteInvalido), errors.Is(err, errEmailEmUso):
 		escreverErro(w, http.StatusNotFound, "nao_encontrado")
-	case errors.Is(err, errEmailEmUso):
-		escreverErro(w, http.StatusConflict, "conflito")
 	case err != nil:
 		falhaInterna(w, r, err)
 	default:
@@ -291,7 +352,8 @@ func (h *Handlers) criarUsuarioDoConvite(r *http.Request, cv convite, nome, senh
 	if err != nil {
 		return "", "", t, err
 	}
-	cifrado, err := plataforma.Cifrar(h.opcoes.ChaveCifra, []byte(segredo))
+	usuarioID := plataforma.NovoID("usr")
+	cifrado, err := CifrarTOTP(h.opcoes.ChaveCifra, usuarioID, segredo)
 	if err != nil {
 		return "", "", t, err
 	}
@@ -299,7 +361,6 @@ func (h *Handlers) criarUsuarioDoConvite(r *http.Request, cv convite, nome, senh
 	if err != nil {
 		return "", "", t, err
 	}
-	usuarioID := plataforma.NovoID("usr")
 	err = tenant.EmTenant(ctx, h.pool, cv.tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE convites SET usado_em = now()
 			WHERE id = $1 AND tenant_id = $2 AND usado_em IS NULL AND expira_em > now()`, cv.id, cv.tenantID)
@@ -322,6 +383,10 @@ func (h *Handlers) criarUsuarioDoConvite(r *http.Request, cv convite, nome, senh
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO associacoes (usuario_id, tenant_id, papel) VALUES ($1, $2, $3)`,
 			usuarioID, cv.tenantID, string(cv.papel)); err != nil {
+			return err
+		}
+		if err := auditoria.Registrar(ctx, tx, cv.tenantID, auditoria.EventoConviteAceito, auditoria.AtorUsuario(usuarioID),
+			nil, map[string]string{"convite_id": cv.id, "papel": string(cv.papel)}); err != nil {
 			return err
 		}
 		t, err = criarSessao(ctx, tx, r, usuarioID, cv.tenantID, false)

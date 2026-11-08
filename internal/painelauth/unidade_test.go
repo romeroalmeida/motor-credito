@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pquerna/otp/totp"
+
+	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
 func TestCookieInseguroDuasTravas(t *testing.T) {
@@ -151,5 +154,55 @@ func TestComparacaoDeSegredoEmTempoConstante(t *testing.T) {
 	// senha, código TOTP, CSRF cabeçalho×cookie, CSRF×sessão
 	if usosSeguros < 4 {
 		t.Errorf("esperava ≥ 4 comparações em tempo constante, achei %d", usosSeguros)
+	}
+}
+
+// O segredo TOTP não pode abrir com a chave dos documentos nem ser copiado para outro usuário (achado 11).
+func TestCifraTOTPSubchaveEAAD(t *testing.T) {
+	mestra := make([]byte, 32)
+	c, err := CifrarTOTP(mestra, "usr_A", "JBSWY3DPEHPK3PXP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := DecifrarTOTP(mestra, "usr_A", c); err != nil || s != "JBSWY3DPEHPK3PXP" {
+		t.Fatalf("DecifrarTOTP = %q, %v", s, err)
+	}
+	if _, err := DecifrarTOTP(mestra, "usr_B", c); err == nil {
+		t.Fatal("segredo de usr_A decifrou como usr_B")
+	}
+	if _, err := plataforma.Decifrar(mestra, c); err == nil {
+		t.Fatal("segredo TOTP decifrou com a chave dos documentos")
+	}
+	if _, err := plataforma.DecifrarAAD(mestra, c, []byte("usr_A")); err == nil {
+		t.Fatal("segredo TOTP decifrou com a chave mestra (sem subchave)")
+	}
+}
+
+// No máximo cap(semArgon) argon2 ao mesmo tempo, por mais logins simultâneos que cheguem (achado 5).
+func TestArgonComTetoDeConcorrencia(t *testing.T) {
+	var mu sync.Mutex
+	agora, pico := 0, 0
+	original := argonIDKey
+	t.Cleanup(func() { argonIDKey = original })
+	argonIDKey = func(senha, sal []byte, it, mem uint32, p uint8, n uint32) []byte {
+		mu.Lock()
+		agora++
+		pico = max(pico, agora)
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		mu.Lock()
+		agora--
+		mu.Unlock()
+		return make([]byte, n)
+	}
+	var wg sync.WaitGroup
+	for range 4 * cap(semArgon) {
+		wg.Go(func() {
+			conferirSenha("senha", "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g")
+		})
+	}
+	wg.Wait()
+	if pico > cap(semArgon) || pico < 2 {
+		t.Fatalf("pico de argon2 simultâneos = %d; teto %d", pico, cap(semArgon))
 	}
 }

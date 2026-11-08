@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { MailPlus, Users } from 'lucide-react'
+import { MailPlus, UserMinus, Users } from 'lucide-react'
 import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
@@ -10,6 +10,7 @@ import {
   CLASSE_SELECT,
   Carregando,
   Cartao,
+  ConfirmarAcao,
   DialogoSegredo,
   ErroCarregar,
   Etiqueta,
@@ -22,7 +23,8 @@ import type { Papel } from '@/shared/types'
 import { lerErroApi } from '@/shared/utils/erroApi'
 import { formatarData } from '@/shared/utils/formato'
 import { ROTULO_PAPEL } from '@/shared/utils/permissoes'
-import { useConvidar, useEquipe } from '../hooks/useEquipe'
+import { useConvidar, useEquipe, useRemoverMembro, useTrocarPapel } from '../hooks/useEquipe'
+import type { Membro } from '../services/equipeService'
 
 const PAPEIS: { valor: Papel; descricao: string }[] = [
   { valor: 'analista', descricao: 'vê consultas e a política' },
@@ -37,8 +39,16 @@ const esquema = z.object({
 
 type Formulario = z.infer<typeof esquema>
 
+function mensagemEquipe(erro: unknown): string {
+  const lido = lerErroApi(erro)
+  return lido.status === 409 ? 'A equipe precisa de ao menos um admin.' : lido.mensagem
+}
+
 export function EquipePage() {
   const equipe = useEquipe()
+  const trocar = useTrocarPapel()
+  const remover = useRemoverMembro()
+  const [aRemover, setARemover] = useState<Membro | null>(null)
 
   return (
     <>
@@ -71,16 +81,42 @@ export function EquipePage() {
                         <p className="truncate font-medium">{membro.nome}</p>
                         <p className="truncate text-sm text-muted-foreground">{membro.email}</p>
                       </div>
-                      <div className="text-right text-sm">
-                        <p className="font-medium">{ROTULO_PAPEL[membro.papel]}</p>
-                        <p className="text-xs text-muted-foreground tabular-nums">
-                          desde {formatarData(membro.desde)}
-                        </p>
+                      <div className="flex items-center gap-2 text-sm">
+                        <div className="text-right">
+                          <select
+                            aria-label={`Papel de ${membro.nome}`}
+                            className={CLASSE_SELECT}
+                            value={membro.papel}
+                            disabled={trocar.isPending}
+                            onChange={(e) =>
+                              trocar.mutate({ usuarioId: membro.usuario_id, papel: e.target.value as Papel })
+                            }
+                          >
+                            {PAPEIS.map(({ valor }) => (
+                              <option key={valor} value={valor}>
+                                {ROTULO_PAPEL[valor]}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="mt-1 text-xs text-muted-foreground tabular-nums">
+                            desde {formatarData(membro.desde)}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={`Remover ${membro.nome}`}
+                          onClick={() => setARemover(membro)}
+                        >
+                          <UserMinus aria-hidden="true" />
+                          Remover
+                        </Button>
                       </div>
                     </li>
                   ))}
                 </ul>
               )}
+              {trocar.isError && <AvisoErro className="mt-3">{mensagemEquipe(trocar.error)}</AvisoErro>}
               {equipe.data.convites.length > 0 && (
                 <div className="mt-6 space-y-2">
                   <h3 className="text-sm font-semibold">Convites pendentes</h3>
@@ -102,6 +138,25 @@ export function EquipePage() {
         </Cartao>
         <FormConvite />
       </div>
+      <ConfirmarAcao
+        aberto={aRemover !== null}
+        aoMudarAberto={(aberto) => {
+          if (!aberto) {
+            setARemover(null)
+            remover.reset()
+          }
+        }}
+        titulo={`Remover ${aRemover?.nome ?? ''} da equipe?`}
+        descricao="A pessoa perde o acesso na hora: as sessões abertas caem. A conta continua existindo e pode ser convidada de novo."
+        rotuloConfirmar="Remover"
+        destrutiva
+        carregando={remover.isPending}
+        aoConfirmar={() =>
+          aRemover && remover.mutate(aRemover.usuario_id, { onSuccess: () => setARemover(null) })
+        }
+      >
+        {remover.isError && <AvisoErro>{mensagemEquipe(remover.error)}</AvisoErro>}
+      </ConfirmarAcao>
     </>
   )
 }

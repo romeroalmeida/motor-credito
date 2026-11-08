@@ -46,6 +46,10 @@ func TestSemearPermiteEntrar(t *testing.T) {
 	if _, err := semear(ctx, b.App, chaveCifra); err != nil {
 		t.Fatalf("primeira semente: %v", err)
 	}
+	// TOTP no formato antigo (ilegível com subchave + AAD): a semente seguinte troca por um novo.
+	if _, err := b.Dono.Exec(ctx, `UPDATE totp SET segredo_cifrado = '\x00'`); err != nil {
+		t.Fatal(err)
+	}
 	d, err := semear(ctx, b.App, chaveCifra) // de novo: reaproveita tenant e admin
 	if err != nil {
 		t.Fatalf("segunda semente: %v", err)
@@ -54,11 +58,11 @@ func TestSemearPermiteEntrar(t *testing.T) {
 	if err != nil || pub.Versao != 1 {
 		t.Fatalf("política publicada: %+v %v", pub, err)
 	}
-	if !strings.HasPrefix(d.chaveAPI, "ck_live_") {
+	if !strings.HasPrefix(d.chaveAPI, "ck_live_") || len(d.segredoAPI) != 64 {
 		t.Fatalf("chave = %q", d.chaveAPI)
 	}
 
-	tenants := tenant.NovoServico(b.App)
+	tenants := tenant.NovoServico(b.App, chaveCifra)
 	r := chi.NewRouter()
 	painelauth.Novo(b.App, tenants, painelauth.Opcoes{ChaveCifra: chaveCifra, CookieInseguro: true}).Rotas(r)
 

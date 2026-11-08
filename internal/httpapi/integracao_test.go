@@ -39,7 +39,7 @@ type ambiente struct {
 	banco            *bancoteste.Banco
 	h                http.Handler
 	tenantA, tenantB string
-	chaveA           string // "ck_live_<id>_<segredo>" do tenant A
+	chaveA           tenant.ChaveCriada // chave de API do tenant A
 	sessA, sessB     sessao
 	sessAuditorA     sessao // papel auditor no tenant A
 }
@@ -48,7 +48,7 @@ func novoAmbiente(t *testing.T) *ambiente {
 	b := bancoteste.Novo(t)
 	ctx := context.Background()
 	a := &ambiente{t: t, banco: b, tenantA: plataforma.NovoID("ten"), tenantB: plataforma.NovoID("ten")}
-	tenants := tenant.NovoServico(b.App)
+	tenants := tenant.NovoServico(b.App, chaveCifra)
 	for _, tc := range []struct {
 		id   string
 		sess *sessao
@@ -72,11 +72,11 @@ func novoAmbiente(t *testing.T) *ambiente {
 	a.dono(`INSERT INTO sessoes (id, token_hash, csrf_hash, usuario_id, tenant_id, dois_fatores_em, expira_em)
 		VALUES ($1, $2, $3, $4, $5, now(), now() + interval '1 hour')`,
 		plataforma.NovoID("ses"), hash(a.sessAuditorA.token), hash(a.sessAuditorA.csrf), aud, a.tenantA)
-	chave, err := tenants.CriarChaveComNome(ctx, a.tenantA, "teste")
+	chave, err := tenants.CriarChaveComNome(ctx, a.tenantA, "teste", "sistema")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.chaveA = chave.Segredo
+	a.chaveA = chave
 	a.h = httpapi.Novo(httpapi.Deps{
 		Pool: b.App, Tenants: tenants,
 		Auth:      painelauth.Novo(b.App, tenants, painelauth.Opcoes{ChaveCifra: chaveCifra, CookieInseguro: true}),
@@ -106,12 +106,12 @@ func (a *ambiente) contar(sql string, args ...any) int {
 // api assina e chama POST /v1/consultas como o cliente faria.
 func (a *ambiente) api(corpo, idem string, assinaturaValida bool) *httptest.ResponseRecorder {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	ass := tenant.Assinar(a.chaveA, ts, []byte(corpo))
+	ass := tenant.Assinar(a.chaveA.Segredo, ts, idem, []byte(corpo))
 	if !assinaturaValida {
-		ass = tenant.Assinar(a.chaveA, ts, []byte(corpo+" "))
+		ass = tenant.Assinar(a.chaveA.Segredo, ts, idem, []byte(corpo+" "))
 	}
 	r := httptest.NewRequest(http.MethodPost, "/v1/consultas", strings.NewReader(corpo))
-	r.Header.Set("Authorization", "Bearer "+a.chaveA)
+	r.Header.Set("Authorization", "Bearer "+a.chaveA.Chave)
 	r.Header.Set("X-Timestamp", ts)
 	r.Header.Set("X-Assinatura", ass)
 	if idem != "" {
@@ -457,7 +457,7 @@ func (a *ambiente) testarAuditoria(t *testing.T) {
 		t.Fatalf("B vê %d registros de auditoria, não só os dele", len(b.Itens))
 	}
 
-	a.dono(`UPDATE auditoria SET dados = jsonb_set(dados, '{status}', '"aprovado"') WHERE tenant_id = $1 AND seq = 3`, a.tenantA)
+	a.dono(`UPDATE auditoria SET dados = jsonb_set(dados, '{adulterado}', 'true') WHERE tenant_id = $1 AND seq = 3`, a.tenantA)
 	if i := decodificar[integridade](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria/integridade", ""), http.StatusOK); i.Integra || !strings.Contains(i.Mensagem, "seq 3") {
 		t.Fatalf("adulteração não detectada pela rota: %+v", i)
 	}

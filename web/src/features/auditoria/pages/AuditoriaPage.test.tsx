@@ -11,6 +11,12 @@ describe('auditoria', () => {
     const usuario = userEvent.setup()
     renderizarPagina(<AuditoriaPage />, { papel: 'auditor' })
     expect(await screen.findByText('#60')).toBeInTheDocument()
+    expect(
+      within(screen.getByText('#60').closest('li') as HTMLElement).getByText('Membro removido'),
+    ).toBeInTheDocument()
+    expect(
+      within(screen.getByText('#59').closest('li') as HTMLElement).getByText('Senha errada'),
+    ).toBeInTheDocument()
     expect(screen.queryByText(`#${SEQ_ADULTERADO}`)).not.toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))

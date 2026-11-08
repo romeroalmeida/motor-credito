@@ -25,7 +25,7 @@ const (
 	CabecalhoCSRF = "X-CSRF"
 
 	duracaoPendente = 10 * time.Minute // entre a senha e o TOTP
-	duracaoSessao   = 12 * time.Hour
+	duracaoSessao   = 12 * time.Hour   // teto; além dele, 30 min sem uso derrubam a sessão (auth_sessao, migration 0002)
 	maxUserAgent    = 300
 )
 
@@ -143,7 +143,7 @@ func criarSessao(ctx context.Context, tx pgx.Tx, r *http.Request, usuarioID, ten
 	return t, nil
 }
 
-// ipDoCliente lê o IP de r.RemoteAddr (quem monta o router decide se confia em proxy).
+// ipDoCliente lê o IP de r.RemoteAddr, que httpapi.IPReal já reescreveu quando a conexão veio de proxy confiável.
 func ipDoCliente(r *http.Request) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

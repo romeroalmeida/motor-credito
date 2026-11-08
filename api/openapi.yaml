@@ -7,7 +7,7 @@ info:
 
     Convenções:
     - Dinheiro sempre em **centavos** (inteiro). Taxa em **pontos-base** ao mês (290 = 2,90% a.m.).
-    - IDs com prefixo: `cons_`, `pol_`, `usr_`, `cvt_`, `ten_` + ULID. Chave de API: `ck_live_<id>_<segredo>`.
+    - IDs com prefixo: `cons_`, `pol_`, `usr_`, `cvt_`, `ten_` + ULID. Chave de API: id público `ck_live_<id>` + segredo (só assina, nunca viaja).
     - Datas em RFC 3339 (UTC). Datas sem hora em `AAAA-MM-DD`.
     - Erros sempre no formato `Erro`. Na autenticação a API nunca diz qual parte falhou.
 
@@ -55,8 +55,19 @@ paths:
         Síncrona. Bureau indisponível vira decisão `negado` com motivo `BUREAU_INDISPONIVEL`, nunca erro.
         Documento com dígito inválido ou de pessoa falecida vira `documento_invalido` (200).
 
-        Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + corpo bruto)).
-        `X-Timestamp` em segundos Unix; fora de ±5 min é recusado.
+        Autenticação: `Authorization: Bearer ck_live_<id>` (só o id; o segredo **nunca** vai em cabeçalho).
+
+        Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + Idempotency-Key + "." + corpo bruto)).
+        Sem `Idempotency-Key`, o trecho do meio fica vazio (`timestamp + ".." + corpo`). `X-Timestamp` em segundos
+        Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
+        trocando a chave de idempotência.
+
+        Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
+
+        ```sh
+        printf '%s' '1700000000.pedido-1.{"a":1}' | openssl dgst -sha256 -hmac segredo
+        # 978ceb5cda878cb0610bead92cb859f485f02688364eb6f30b182abdbe92906a
+        ```
       security:
         - chaveApi: []
       parameters:
@@ -179,13 +190,14 @@ paths:
                   otpauth_url: { type: string, description: "otpauth://totp/... para gerar o QR code" }
                   segredo_totp: { type: string, description: "Base32, para digitar à mão" }
         "400": { $ref: "#/components/responses/CorpoInvalido" }
-        "404": { $ref: "#/components/responses/NaoEncontrado" }
-        "409":
-          description: O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente)
+        "404":
+          description: |
+            Convite inexistente, usado ou vencido — ou o e-mail do convite já tem conta. A resposta é a mesma de
+            propósito: o cadastro não revela quem tem conta.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Erro" }
-              example: { erro: conflito }
+              example: { erro: nao_encontrado }
 
   /painel/auth/sair:
     post:
@@ -359,6 +371,50 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Erro" }
+
+  /painel/equipe/{usuario_id}:
+    parameters:
+      - { name: usuario_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [equipe]
+      summary: Troca o papel de um membro
+      description: |
+        Só no tenant da sessão (membro de outro tenant → 404). Vale na request seguinte do membro. Não rebaixa o
+        último admin do tenant (409 `ultimo_admin`). Gera `equipe.papel_alterado` na auditoria.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [papel]
+              properties:
+                papel: { $ref: "#/components/schemas/Papel" }
+      responses:
+        "200":
+          description: Papel trocado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membro" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/UltimoAdmin" }
+    delete:
+      tags: [equipe]
+      summary: Remove o membro do tenant (derruba as sessões dele na hora)
+      description: |
+        Apaga só a associação com o tenant da sessão; a conta continua (pode estar em outros tenants). Não remove o
+        último admin (409 `ultimo_admin`). Gera `equipe.membro_removido` na auditoria.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      responses:
+        "204": { description: Removido }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/UltimoAdmin" }
 
   # ------------------------------------------------------------------ Painel: consultas (admin, analista)
   /painel/consultas:
@@ -683,7 +739,7 @@ components:
     chaveApi:
       type: http
       scheme: bearer
-      description: "Authorization: Bearer ck_live_<id>_<segredo> (mais X-Timestamp e X-Assinatura)"
+      description: "Authorization: Bearer ck_live_<id> (só o id; mais X-Timestamp e X-Assinatura feita com o segredo)"
     sessao:
       type: apiKey
       in: cookie
@@ -742,6 +798,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Erro" }
           example: { erro: proibido }
+    UltimoAdmin:
+      description: A operação deixaria o tenant sem admin
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: ultimo_admin, mensagem: o tenant precisa de ao menos um admin }
     NaoEncontrado:
       description: Não existe ou é de outro tenant
       content:
@@ -911,7 +973,13 @@ components:
       required: [seq, evento, ator, consulta_id, criado_em, hash_ok]
       properties:
         seq: { type: integer }
-        evento: { type: string, examples: [consulta.decidida, politica.publicada] }
+        evento:
+          type: string
+          description: |
+            consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
+            equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
+            auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu. Os dados nunca levam e-mail, senha ou documento.
+          examples: [consulta.decidida, politica.publicada, chave.criada, equipe.membro_removido, auth.falhou]
         ator: { type: string, examples: ["api:<chave_id>", "usuario:<id>"] }
         consulta_id: { type: [string, "null"] }
         criado_em: { type: string, format: date-time }
@@ -1097,17 +1165,21 @@ components:
       properties:
         id: { type: string }
         nome: { type: string }
-        prefixo: { type: string, description: '"ck_live_<id>_…" (sem o segredo)' }
+        prefixo: { type: string, description: '"ck_live_<id>": o id público que vai no Bearer (não é segredo)' }
         criada_em: { type: string, format: date-time }
         revogada_em: { type: [string, "null"], format: date-time }
         ultimo_uso_em: { type: [string, "null"], format: date-time }
 
     ChaveCriada:
       type: object
-      required: [id, segredo]
+      required: [id, chave, segredo]
       properties:
         id: { type: string }
-        segredo: { type: string, description: 'Completo: "ck_live_<id>_<segredo>". Mostrado uma única vez.' }
+        chave: { type: string, description: '"ck_live_<id>": vai no cabeçalho Authorization: Bearer' }
+        segredo:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Chave do HMAC de X-Assinatura. Mostrado uma única vez; o servidor guarda cifrado.
 
     IPsPermitidos:
       type: object

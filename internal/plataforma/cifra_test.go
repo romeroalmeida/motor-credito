@@ -61,6 +61,33 @@ func TestCifrarDecifrar(t *testing.T) {
 	}
 }
 
+func TestCifrarAADAmarraAoContexto(t *testing.T) {
+	chave := bytes.Repeat([]byte{7}, 32)
+	c, err := CifrarAAD(chave, []byte("segredo"), []byte("usr_A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claro, err := DecifrarAAD(chave, c, []byte("usr_A")); err != nil || string(claro) != "segredo" {
+		t.Fatalf("mesmo AAD: %q, %v", claro, err)
+	}
+	for nome, aad := range map[string][]byte{"outro AAD": []byte("usr_B"), "sem AAD": nil} {
+		if _, err := DecifrarAAD(chave, c, aad); !errors.Is(err, ErrDecifrar) {
+			t.Errorf("%s: erro = %v; quer ErrDecifrar", nome, err)
+		}
+	}
+}
+
+func TestDerivarChaveSeparaFinalidades(t *testing.T) {
+	mestra := bytes.Repeat([]byte{7}, 32)
+	totp, api := DerivarChave(mestra, "totp"), DerivarChave(mestra, "chave-api")
+	if len(totp) != 32 || bytes.Equal(totp, api) || bytes.Equal(totp, mestra) || bytes.Equal(api, mestra) {
+		t.Fatal("subchaves precisam ter 32 bytes e ser diferentes entre si e da mestra")
+	}
+	if !bytes.Equal(totp, DerivarChave(mestra, "totp")) {
+		t.Fatal("derivação precisa ser determinística")
+	}
+}
+
 func TestNovoID(t *testing.T) {
 	a, b := NovoID("cons"), NovoID("cons")
 	if !strings.HasPrefix(a, "cons_") || len(a) != len("cons_")+26 {

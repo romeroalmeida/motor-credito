@@ -57,8 +57,19 @@ export interface paths {
      * @description Síncrona. Bureau indisponível vira decisão `negado` com motivo `BUREAU_INDISPONIVEL`, nunca erro.
      *     Documento com dígito inválido ou de pessoa falecida vira `documento_invalido` (200).
      *
-     *     Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + corpo bruto)).
-     *     `X-Timestamp` em segundos Unix; fora de ±5 min é recusado.
+     *     Autenticação: `Authorization: Bearer ck_live_<id>` (só o id; o segredo **nunca** vai em cabeçalho).
+     *
+     *     Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + Idempotency-Key + "." + corpo bruto)).
+     *     Sem `Idempotency-Key`, o trecho do meio fica vazio (`timestamp + ".." + corpo`). `X-Timestamp` em segundos
+     *     Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
+     *     trocando a chave de idempotência.
+     *
+     *     Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
+     *
+     *     ```sh
+     *     printf '%s' '1700000000.pedido-1.{"a":1}' | openssl dgst -sha256 -hmac segredo
+     *     # 978ceb5cda878cb0610bead92cb859f485f02688364eb6f30b182abdbe92906a
+     *     ```
      */
     post: {
       parameters: {
@@ -284,16 +295,18 @@ export interface paths {
           }
         }
         400: components['responses']['CorpoInvalido']
-        404: components['responses']['NaoEncontrado']
-        /** @description O e-mail do convite já tem conta (usuário é global; o convite não serve para conta existente) */
-        409: {
+        /**
+         * @description Convite inexistente, usado ou vencido — ou o e-mail do convite já tem conta. A resposta é a mesma de
+         *     propósito: o cadastro não revela quem tem conta.
+         */
+        404: {
           headers: {
             [name: string]: unknown
           }
           content: {
             /**
              * @example {
-             *       "erro": "conflito"
+             *       "erro": "nao_encontrado"
              *     }
              */
             'application/json': components['schemas']['Erro']
@@ -697,6 +710,95 @@ export interface paths {
     options?: never
     head?: never
     patch?: never
+    trace?: never
+  }
+  '/painel/equipe/{usuario_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        usuario_id: string
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /**
+     * Remove o membro do tenant (derruba as sessões dele na hora)
+     * @description Apaga só a associação com o tenant da sessão; a conta continua (pode estar em outros tenants). Não remove o
+     *     último admin (409 `ultimo_admin`). Gera `equipe.membro_removido` na auditoria.
+     */
+    delete: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path: {
+          usuario_id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Removido */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+        404: components['responses']['NaoEncontrado']
+        409: components['responses']['UltimoAdmin']
+      }
+    }
+    options?: never
+    head?: never
+    /**
+     * Troca o papel de um membro
+     * @description Só no tenant da sessão (membro de outro tenant → 404). Vale na request seguinte do membro. Não rebaixa o
+     *     último admin do tenant (409 `ultimo_admin`). Gera `equipe.papel_alterado` na auditoria.
+     */
+    patch: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path: {
+          usuario_id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            papel: components['schemas']['Papel']
+          }
+        }
+      }
+      responses: {
+        /** @description Papel trocado */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['Membro']
+          }
+        }
+        400: components['responses']['CorpoInvalido']
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+        404: components['responses']['NaoEncontrado']
+        409: components['responses']['UltimoAdmin']
+      }
+    }
     trace?: never
   }
   '/painel/consultas': {
@@ -1528,8 +1630,14 @@ export interface components {
     RegistroAuditoria: {
       seq: number
       /**
+       * @description consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
+       *     equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
+       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu. Os dados nunca levam e-mail, senha ou documento.
        * @example consulta.decidida
        * @example politica.publicada
+       * @example chave.criada
+       * @example equipe.membro_removido
+       * @example auth.falhou
        */
       evento: string
       /**
@@ -1693,7 +1801,7 @@ export interface components {
     Chave: {
       id: string
       nome: string
-      /** @description "ck_live_<id>_…" (sem o segredo) */
+      /** @description "ck_live_<id>": o id público que vai no Bearer (não é segredo) */
       prefixo: string
       /** Format: date-time */
       criada_em: string
@@ -1704,7 +1812,9 @@ export interface components {
     }
     ChaveCriada: {
       id: string
-      /** @description Completo: "ck_live_<id>_<segredo>". Mostrado uma única vez. */
+      /** @description "ck_live_<id>": vai no cabeçalho Authorization: Bearer */
+      chave: string
+      /** @description Chave do HMAC de X-Assinatura. Mostrado uma única vez; o servidor guarda cifrado. */
       segredo: string
     }
     IPsPermitidos: {
@@ -1817,6 +1927,21 @@ export interface components {
         /**
          * @example {
          *       "erro": "proibido"
+         *     }
+         */
+        'application/json': components['schemas']['Erro']
+      }
+    }
+    /** @description A operação deixaria o tenant sem admin */
+    UltimoAdmin: {
+      headers: {
+        [name: string]: unknown
+      }
+      content: {
+        /**
+         * @example {
+         *       "erro": "ultimo_admin",
+         *       "mensagem": "o tenant precisa de ao menos um admin"
          *     }
          */
         'application/json': components['schemas']['Erro']

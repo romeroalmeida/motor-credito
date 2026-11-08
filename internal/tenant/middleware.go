@@ -5,10 +5,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
 const (
@@ -47,11 +49,14 @@ func ChaveDoContexto(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
-// Assinar calcula o X-Assinatura: hex(HMAC-SHA256(chaveCompleta, timestamp + "." + corpo)).
-// chaveCompleta é o valor inteiro "ck_live_<id>_<segredo>" que o cliente recebeu.
-func Assinar(chaveCompleta, timestamp string, corpo []byte) string {
-	m := hmac.New(sha256.New, []byte(chaveCompleta))
+// Assinar calcula o X-Assinatura: hex(HMAC-SHA256(segredo, timestamp + "." + idempotencyKey + "." + corpo)).
+// segredo é o valor hex que o cliente recebeu junto com o id "ck_live_<id>"; sem Idempotency-Key, idempotencyKey é "".
+// Assinar a Idempotency-Key impede que quem capturou uma requisição a repita trocando a chave.
+func Assinar(segredo, timestamp, idempotencyKey string, corpo []byte) string {
+	m := hmac.New(sha256.New, []byte(segredo))
 	m.Write([]byte(timestamp))
+	m.Write([]byte("."))
+	m.Write([]byte(idempotencyKey))
 	m.Write([]byte("."))
 	m.Write(corpo)
 	return hex.EncodeToString(m.Sum(nil))
@@ -98,7 +103,7 @@ func (s *Servico) autenticar(r *http.Request, corpo []byte) (Tenant, string, err
 	if !ok {
 		return Tenant{}, "", errCredencial
 	}
-	chaveID, segredo, ok := separarChave(token)
+	chaveID, ok := idDaChave(token)
 	if !ok || !s.timestampValido(r.Header.Get("X-Timestamp")) {
 		return Tenant{}, "", errCredencial
 	}
@@ -106,24 +111,27 @@ func (s *Servico) autenticar(r *http.Request, corpo []byte) (Tenant, string, err
 	if err != nil {
 		return Tenant{}, "", errCredencial
 	}
-	esperada, _ := hex.DecodeString(Assinar(token, r.Header.Get("X-Timestamp"), corpo))
-	if !hmac.Equal(recebida, esperada) {
-		return Tenant{}, "", errCredencial
-	}
 
 	var tenantID string
-	var hashGuardado []byte
+	var cifrado []byte
 	var revogadaEm *time.Time
-	err = s.pool.QueryRow(r.Context(), `SELECT tenant_id, segredo_hash, revogada_em FROM auth_chave_api($1)`, chaveID).
-		Scan(&tenantID, &hashGuardado, &revogadaEm)
-	hash := sha256.Sum256([]byte(segredo))
+	err = s.pool.QueryRow(r.Context(), `SELECT tenant_id, segredo_cifrado, revogada_em FROM auth_chave_api($1)`, chaveID).
+		Scan(&tenantID, &cifrado, &revogadaEm)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tenant{}, "", errCredencial
 	}
 	if err != nil {
 		return Tenant{}, "", err
 	}
-	if subtle.ConstantTimeCompare(hash[:], hashGuardado) != 1 || revogadaEm != nil {
+	if revogadaEm != nil || cifrado == nil {
+		return Tenant{}, "", errCredencial
+	}
+	segredo, err := plataforma.DecifrarAAD(s.chaveSegredo, cifrado, []byte(chaveID))
+	if err != nil {
+		return Tenant{}, "", fmt.Errorf("decifrar segredo da chave %s: %w", chaveID, err)
+	}
+	esperada, _ := hex.DecodeString(Assinar(string(segredo), r.Header.Get("X-Timestamp"), r.Header.Get("Idempotency-Key"), corpo))
+	if !hmac.Equal(recebida, esperada) {
 		return Tenant{}, "", errCredencial
 	}
 
@@ -149,14 +157,10 @@ func (s *Servico) marcarUso(ctx context.Context, tenantID, chaveID string) {
 	}
 }
 
-// separarChave quebra "ck_live_<id>_<segredo>". O id é ULID e o segredo é hex: nenhum dos dois tem "_".
-func separarChave(token string) (id, segredo string, ok bool) {
-	resto, ok := strings.CutPrefix(token, prefixoChave)
-	if !ok {
-		return "", "", false
-	}
-	id, segredo, ok = strings.Cut(resto, "_")
-	return id, segredo, ok && len(id) == 26 && len(segredo) == 64
+// idDaChave lê "ck_live_<id>" (id ULID de 26 caracteres). O segredo nunca viaja: só assina.
+func idDaChave(token string) (string, bool) {
+	id, ok := strings.CutPrefix(token, prefixoChave)
+	return id, ok && len(id) == 26 && !strings.Contains(id, "_")
 }
 
 func (s *Servico) timestampValido(v string) bool {
@@ -171,7 +175,7 @@ func (s *Servico) timestampValido(v string) bool {
 }
 
 // ipPermitido: lista vazia libera qualquer IP; endereço ilegível é recusado (fail-closed).
-// Usa r.RemoteAddr: atrás de proxy, quem monta o router precisa reescrevê-lo só a partir de proxy confiável.
+// Usa r.RemoteAddr, que httpapi.IPReal já reescreveu quando a conexão veio de proxy confiável.
 func ipPermitido(remoteAddr string, permitidos []netip.Prefix) bool {
 	if len(permitidos) == 0 {
 		return true

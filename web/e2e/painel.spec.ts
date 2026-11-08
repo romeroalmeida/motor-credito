@@ -10,6 +10,7 @@ interface Demo {
   senha: string
   segredoTotp: string
   chaveApi: string
+  segredoApi: string
 }
 
 /** O mesmo banco da API do compose, pela porta publicada no host. */
@@ -37,6 +38,7 @@ function semear(): Demo {
     senha: campo('senha'),
     segredoTotp: campo('segredo TOTP'),
     chaveApi: campo('chave de API'),
+    segredoApi: campo('segredo API'),
   }
 }
 
@@ -61,14 +63,19 @@ function codigoTotp(segredo: string, agora = Date.now()): string {
   return String((hmac.readUInt32BE(deslocamento) & 0x7fffffff) % 1_000_000).padStart(6, '0')
 }
 
-/** Cabeçalhos da API pública: Bearer + X-Timestamp + X-Assinatura = hex(HMAC-SHA256(chave, ts + "." + corpo)). */
-function assinar(chave: string, corpo: string): Record<string, string> {
+/**
+ * Cabeçalhos da API pública: Bearer ck_live_<id> + X-Timestamp + Idempotency-Key +
+ * X-Assinatura = hex(HMAC-SHA256(segredo, ts + "." + idempotency_key + "." + corpo)).
+ */
+function assinar(chave: string, segredo: string, corpo: string): Record<string, string> {
   const ts = String(Math.floor(Date.now() / 1000))
+  const idem = `e2e-${ts}-${Math.random().toString(36).slice(2)}`
   return {
     Authorization: `Bearer ${chave}`,
     'Content-Type': 'application/json',
     'X-Timestamp': ts,
-    'X-Assinatura': createHmac('sha256', chave).update(`${ts}.${corpo}`).digest('hex'),
+    'Idempotency-Key': idem,
+    'X-Assinatura': createHmac('sha256', segredo).update(`${ts}.${idem}.${corpo}`).digest('hex'),
   }
 }
 
@@ -80,6 +87,16 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
   page,
   request,
 }) => {
+  // CSP do nginx: nenhuma violação em todas as telas que o fluxo abre.
+  const violacoes: string[] = []
+  page.on('console', (msg) => {
+    if (/Content Security Policy|Refused to/i.test(msg.text())) violacoes.push(msg.text())
+  })
+  // Texto (não função): o tsconfig do e2e não tem os tipos do DOM.
+  await page.addInitScript({
+    content: `document.addEventListener('securitypolicyviolation', (e) =>
+      console.error('Refused to load (CSP): ' + e.violatedDirective + ' ' + e.blockedURI))`,
+  })
   const demo = semear()
   const taxaBps = 100 + Math.floor(Math.random() * 800)
   const taxaTexto = (taxaBps / 100).toFixed(2).replace('.', ',')
@@ -117,7 +134,7 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
       pedido: { valor: 100_000, prazo: 12 },
     })
     const resposta = await request.post('/v1/consultas', {
-      headers: assinar(demo.chaveApi, corpo),
+      headers: assinar(demo.chaveApi, demo.segredoApi, corpo),
       data: corpo,
     })
     expect(resposta.status()).toBe(200)
@@ -135,5 +152,38 @@ test('admin publica uma faixa nova e a consulta da API pública sai com essa ver
     await page.locator(`a[href="/consultas/${consultaId}"]`).click()
     await expect(page.getByText(`Versão ${versao}`, { exact: true })).toBeVisible()
     await expect(page.getByText(`${taxaTexto}% a.m.`)).toBeVisible()
+  })
+
+  await test.step('chave criada na tela assina a API (id no Bearer, segredo só na assinatura)', async () => {
+    await page.getByRole('link', { name: 'Chaves de API' }).click()
+    await page.getByLabel('Nome da nova chave').fill(`e2e ${Date.now()}`)
+    await page.getByRole('button', { name: 'Criar chave' }).click()
+    const dialogo = page.getByRole('alertdialog', { name: 'Sua nova chave' })
+    await expect(dialogo.getByTestId('segredo')).toHaveCount(2)
+    const [chave, segredo] = await dialogo.getByTestId('segredo').allTextContents()
+    expect(chave).toMatch(/^ck_live_[0-9A-Z]{26}$/)
+    expect(segredo).toMatch(/^[0-9a-f]{64}$/)
+    await dialogo.getByRole('button', { name: 'Já guardei, fechar' }).click()
+
+    const corpo = JSON.stringify({
+      documento: CPF_SCORE_ALTO,
+      finalidade: 'concessao_credito',
+      pedido: { valor: 100_000, prazo: 12 },
+    })
+    const ok = await request.post('/v1/consultas', {
+      headers: assinar(chave as string, segredo as string, corpo),
+      data: corpo,
+    })
+    expect(ok.status()).toBe(200)
+    const comSegredoNoBearer = assinar(chave as string, segredo as string, corpo)
+    comSegredoNoBearer.Authorization = `Bearer ${chave}_${segredo}`
+    const recusada = await request.post('/v1/consultas', { headers: comSegredoNoBearer, data: corpo })
+    expect(recusada.status()).toBe(401)
+  })
+
+  await test.step('nenhuma violação de CSP no caminho', async () => {
+    const resposta = await request.get('/')
+    expect(resposta.headers()['content-security-policy']).toContain("script-src 'self'")
+    expect(violacoes).toEqual([])
   })
 })

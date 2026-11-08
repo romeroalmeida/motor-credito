@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -22,13 +23,26 @@ const (
 
 var b64 = base64.RawStdEncoding
 
+// semArgon limita quantos argon2 rodam ao mesmo tempo (19 MiB cada): rajada de login espera na fila em vez de
+// esgotar memória e CPU. argonIDKey é trocado nos testes.
+var (
+	semArgon   = make(chan struct{}, max(2, runtime.NumCPU()))
+	argonIDKey = argon2.IDKey
+)
+
+func idKey(senha, sal []byte, t, m uint32, p uint8, tamanho uint32) []byte {
+	semArgon <- struct{}{}
+	defer func() { <-semArgon }()
+	return argonIDKey(senha, sal, t, m, p, tamanho)
+}
+
 // hashSenha devolve o formato PHC: $argon2id$v=19$m=...,t=...,p=...$<sal>$<hash>.
 func hashSenha(senha string) (string, error) {
 	sal := make([]byte, argonSal)
 	if _, err := rand.Read(sal); err != nil {
 		return "", fmt.Errorf("gerar sal: %w", err)
 	}
-	h := argon2.IDKey([]byte(senha), sal, argonIteracoes, argonMemoriaKiB, argonVias, argonTamanho)
+	h := idKey([]byte(senha), sal, argonIteracoes, argonMemoriaKiB, argonVias, argonTamanho)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, argonMemoriaKiB, argonIteracoes, argonVias,
 		b64.EncodeToString(sal), b64.EncodeToString(h)), nil
 }
@@ -50,7 +64,7 @@ func conferirSenha(senha, phc string) bool {
 	if err1 != nil || err2 != nil || len(guardado) == 0 {
 		return false
 	}
-	calculado := argon2.IDKey([]byte(senha), sal, t, m, p, uint32(len(guardado)))
+	calculado := idKey([]byte(senha), sal, t, m, p, uint32(len(guardado)))
 	return subtle.ConstantTimeCompare(calculado, guardado) == 1
 }
 

@@ -27,6 +27,7 @@ func TestCarregarFailClosed(t *testing.T) {
 		{"cifra 31 bytes", "CHAVE_CIFRA_DOC", hex32[:62], "precisa de 32 bytes"},
 		{"cifra 33 bytes", "CHAVE_CIFRA_DOC", hex32 + "20", "precisa de 32 bytes"},
 		{"só espaços", "DATABASE_URL", "   ", "DATABASE_URL ausente"},
+		{"proxy inválido", "PROXIES_CONFIAVEIS", "10.0.0.0/8, nginx", "PROXIES_CONFIAVEIS"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
@@ -64,5 +65,25 @@ func TestAmbienteDesconhecidoEhProducao(t *testing.T) {
 		if c.EhProducao() != producao {
 			t.Errorf("AMBIENTE=%q: EhProducao = %v; quer %v", valor, c.EhProducao(), producao)
 		}
+	}
+}
+
+func TestProxiesConfiaveis(t *testing.T) {
+	m := valido()
+	c, err := CarregarDe(ambiente(m))
+	if err != nil || len(c.ProxiesConfiaveis) != 0 {
+		t.Fatalf("sem PROXIES_CONFIAVEIS não confia em ninguém: %v %v", c.ProxiesConfiaveis, err)
+	}
+	m["PROXIES_CONFIAVEIS"] = " 172.28.0.10 , 10.0.0.0/8,2001:db8::/32 "
+	c, err = CarregarDe(ambiente(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var txt []string
+	for _, p := range c.ProxiesConfiaveis {
+		txt = append(txt, p.String())
+	}
+	if got := strings.Join(txt, " "); got != "172.28.0.10/32 10.0.0.0/8 2001:db8::/32" {
+		t.Fatalf("proxies = %q", got)
 	}
 }

@@ -2,23 +2,23 @@ import { delay, type HttpHandler, http, HttpResponse } from 'msw'
 import type { Schemas } from '@/shared/types'
 
 // Handlers MSW da feature, montados em src/mocks/handlers.ts (dev e Vitest).
-// Como no servidor: o segredo só existe na resposta de criar/girar; a lista guarda o prefixo.
+// Como no servidor: o segredo só existe na resposta de criar/girar; a lista mostra só o id público.
 
 type Chave = Schemas['Chave']
 
 const chaves: Chave[] = [
   {
-    id: 'chv_01JC8ZK3Q0PRODUCAO000000',
+    id: '01JC8ZK3Q0PRODUCAO00000000',
     nome: 'produção',
-    prefixo: 'ck_live_chv_01JC8ZK3Q0PRODUCAO000000_…',
+    prefixo: 'ck_live_01JC8ZK3Q0PRODUCAO00000000',
     criada_em: '2026-10-02T12:10:00Z',
     revogada_em: null,
     ultimo_uso_em: '2026-11-07T13:58:41Z',
   },
   {
-    id: 'chv_01JC8ZK3Q0HOMOLOGACAO000',
+    id: '01JC8ZK3Q0HOMOLOGACAO00000',
     nome: 'homologação',
-    prefixo: 'ck_live_chv_01JC8ZK3Q0HOMOLOGACAO000_…',
+    prefixo: 'ck_live_01JC8ZK3Q0HOMOLOGACAO00000',
     criada_em: '2026-09-15T09:00:00Z',
     revogada_em: '2026-10-01T18:30:00Z',
     ultimo_uso_em: '2026-09-30T22:14:00Z',
@@ -30,16 +30,16 @@ let sequencia = 0
 
 function gerar(nome: string): Schemas['ChaveCriada'] {
   sequencia += 1
-  const id = `chv_01JC8ZK3Q0NOVA${String(sequencia).padStart(10, '0')}`
+  const id = `01JC8ZK3Q0NOVA${String(sequencia).padStart(12, '0')}`
   chaves.unshift({
     id,
     nome,
-    prefixo: `ck_live_${id}_…`,
+    prefixo: `ck_live_${id}`,
     criada_em: new Date().toISOString(),
     revogada_em: null,
     ultimo_uso_em: null,
   })
-  return { id, segredo: `ck_live_${id}_s3gr3d0demo${sequencia}x9Qm2LkP7vZt4RwN8aYc` }
+  return { id, chave: `ck_live_${id}`, segredo: `${String(sequencia).padStart(4, '0')}`.padEnd(64, 'a1b2') }
 }
 
 const ativa = (id: unknown) => chaves.find((c) => c.id === id && c.revogada_em === null)
