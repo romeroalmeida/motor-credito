@@ -1,0 +1,6 @@
+# Falsos positivos conferidos à mão em 08/11/2026 (auditoria pré-push):
+# - argon2.IDKey é o nome da função da biblioteca, não uma chave
+# - chv_01JC8ZK3Q0PRODUCAO00000 é um id fictício dos mocks do painel
+1470c8e23a7fbd2cc439a7f9fc95bc8b0a10c2d9:internal/painelauth/senha.go:generic-api-key:30
+aa6e232b25f5618fe27546c3bc87ab588776f112:web/src/features/auditoria/mocks/handlers.ts:generic-api-key:18
+ac648494a9200372930ee7ae921fe19b44927cc1:web/src/features/auditoria/mocks/handlers.ts:generic-api-key:23
