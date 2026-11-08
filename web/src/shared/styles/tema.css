@@ -1,0 +1,36 @@
+/* Tokens do painel — direção visual do desenho §8 (docs/referencias/ui-pinterest-*.jpg). */
+:root {
+  /* Fundo cinza muito claro; cards brancos. */
+  --background: oklch(0.975 0.003 260);
+  --foreground: oklch(0.17 0.01 260);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  /* Menus flutuantes em card escuro. */
+  --popover: oklch(0.2 0.012 260);
+  --popover-foreground: oklch(0.98 0 0);
+
+  /* Destaque (botões primários, chips ativos, ícones redondos) em quase-preto. */
+  --primary: oklch(0.2 0.012 260);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.955 0.004 260);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.955 0.004 260);
+  /* 0.5 de luminosidade mantém contraste AA sobre branco e sobre o fundo. */
+  --muted-foreground: oklch(0.5 0.01 260);
+  --accent: oklch(0.955 0.004 260);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.58 0.22 27);
+  --border: oklch(0.92 0.004 260);
+  --input: oklch(0.92 0.004 260);
+  --ring: oklch(0.2 0.012 260);
+
+  --sinal-aprovado: oklch(0.72 0.17 155);
+  --sinal-negado: oklch(0.63 0.22 25);
+  --sinal-contraproposta: oklch(0.6 0.2 285);
+  --sinal-alerta: oklch(0.78 0.16 75);
+  --sinal-neutro: oklch(0.65 0.01 260);
+
+  --radius: 0.75rem;
+  --raio-card: 1.25rem;
+  --sombra-card: 0 12px 40px -12px oklch(0.4 0.02 260 / 0.14);
+}
