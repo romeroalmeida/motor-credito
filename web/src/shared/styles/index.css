@@ -4,6 +4,10 @@
 @import '@fontsource-variable/geist';
 @import './tema.css';
 
+/* Sem tema escuro na v1: `dark:` só com a classe .dark, nunca pelo modo escuro do sistema
+   (senão os componentes shadcn trocam o fundo dos campos e o contraste quebra). */
+@custom-variant dark (&:is(.dark *));
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
@@ -26,6 +30,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-borda-campo: var(--borda-campo);
 
   /* Sinais: cor só em bolinhas e chips, sempre acompanhada de texto (desenho §8). */
   --color-sinal-aprovado: var(--sinal-aprovado);
@@ -52,5 +57,11 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    @apply bg-primary text-primary-foreground;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
   }
 }

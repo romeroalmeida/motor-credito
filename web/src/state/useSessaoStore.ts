@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Schemas } from '@/shared/types'
+import type { Papel, Schemas } from '@/shared/types'
 
 type Eu = Schemas['Eu']
 
@@ -15,3 +15,7 @@ export const useSessaoStore = create<SessaoState>((set) => ({
   definir: (eu) => set({ eu }),
   limpar: () => set({ eu: null }),
 }))
+
+export function usePapel(): Papel | null {
+  return useSessaoStore((estado) => estado.eu?.papel ?? null)
+}

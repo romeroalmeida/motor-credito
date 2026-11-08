@@ -1,6 +1,11 @@
 import axios from 'axios'
+import { useSessaoStore } from '@/state/useSessaoStore'
+import { endpoints } from './endpoints'
 
 const METODOS_QUE_ESCREVEM = new Set(['post', 'put', 'patch', 'delete'])
+
+// 401 nestas rotas é "senha/código errado", não "sessão caiu": a tela de Entrar trata.
+const ROTAS_DE_LOGIN = new Set<string>([endpoints.auth.entrar, endpoints.auth.doisFatores])
 
 // Double submit: o servidor compara o cabeçalho X-CSRF com o cookie `csrf` (legível pelo JS).
 export function lerCookie(nome: string, cookies: string = document.cookie): string | undefined {
@@ -20,4 +25,16 @@ apiClient.interceptors.request.use((config) => {
     config.headers.set('X-CSRF', csrf)
   }
   return config
+})
+
+// Sessão vencida em qualquer chamada: limpa o retrato da sessão e a guarda de rota manda para Entrar.
+apiClient.interceptors.response.use(undefined, (erro: unknown) => {
+  if (
+    axios.isAxiosError(erro) &&
+    erro.response?.status === 401 &&
+    !ROTAS_DE_LOGIN.has(erro.config?.url ?? '')
+  ) {
+    useSessaoStore.getState().limpar()
+  }
+  return Promise.reject(erro)
 })
