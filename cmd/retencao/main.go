@@ -1,7 +1,8 @@
 // Comando retencao aplica a retenção LGPD (desenho §4): consultas mais velhas que RETENCAO_DIAS (padrão 1825,
-// 5 anos) perdem o documento e a Idempotency-Key e ficam só com o agregado. Roda com o usuário da aplicação
-// (DATABASE_URL, sujeito à RLS), é idempotente e foi feito para um agendador (cron ou o profile "retencao" do
-// docker compose). Sai com código diferente de zero em qualquer erro, para o agendador alertar.
+// 5 anos) perdem o documento e a Idempotency-Key e ficam só com o agregado; o cache da tabela idempotencia vencido
+// é apagado. Roda com o usuário da aplicação (DATABASE_URL, sujeito à RLS; recusa dono, superusuário ou
+// BYPASSRLS), é idempotente e foi feito para um agendador (cron ou o profile "retencao" do docker compose).
+// Sai com código diferente de zero em qualquer erro, para o agendador alertar.
 package main
 
 import (
@@ -42,6 +43,9 @@ func rodar() error {
 		return err
 	}
 	defer pool.Close()
+	if err := plataforma.ConferirPapelDaApp(ctx, pool); err != nil {
+		return err
+	}
 	n, err := repositorio.AplicarRetencao(ctx, pool, dias, time.Now())
 	if err != nil {
 		return err

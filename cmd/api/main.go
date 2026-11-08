@@ -56,7 +56,7 @@ func rodar() error {
 		return err
 	}
 	defer pool.Close()
-	if err := conferirPapelDaApp(ctx, pool); err != nil {
+	if err := plataforma.ConferirPapelDaApp(ctx, pool); err != nil {
 		return err
 	}
 

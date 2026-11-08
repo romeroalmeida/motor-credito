@@ -1,4 +1,4 @@
-package main
+package plataforma
 
 import (
 	"context"
@@ -42,7 +42,7 @@ func TestConferirPapelDaApp(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			err := conferirPapelDaApp(ctx, c.pool)
+			err := ConferirPapelDaApp(ctx, c.pool)
 			if c.erro == "" && err != nil {
 				t.Fatalf("recusou usuário válido: %v", err)
 			}

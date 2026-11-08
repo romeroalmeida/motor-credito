@@ -1,4 +1,4 @@
-package main
+package plataforma
 
 import (
 	"context"
@@ -8,10 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// conferirPapelDaApp recusa subir quando o usuário de DATABASE_URL passaria por cima da RLS: superusuário,
-// BYPASSRLS ou dono (direto ou por herança de papel) de alguma tabela do schema public. A RLS não é FORCE,
+// ConferirPapelDaApp recusa rodar (API e job de retenção) quando o usuário de DATABASE_URL passaria por cima da
+// RLS: superusuário, BYPASSRLS ou dono (direto ou por herança de papel) de alguma tabela do schema public. A RLS não é FORCE,
 // então o dono não sofre RLS; o isolamento entre tenants depende de a aplicação nunca conectar como ele.
-func conferirPapelDaApp(ctx context.Context, pool *pgxpool.Pool) error {
+func ConferirPapelDaApp(ctx context.Context, pool *pgxpool.Pool) error {
 	var usuario string
 	var super, bypass bool
 	var donas int
