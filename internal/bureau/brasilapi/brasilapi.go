@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -57,6 +58,10 @@ func (c cliente) Consultar(ctx context.Context, doc string) (bureau.Resultado, e
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err // url.Error traz a URL com o CNPJ, e o erro vai para o log
+		}
 		return bureau.Resultado{}, indisponivel(err)
 	}
 	defer resp.Body.Close()

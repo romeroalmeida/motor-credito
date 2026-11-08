@@ -126,6 +126,9 @@ func TestTimeoutDoCtx(t *testing.T) {
 	if d := time.Since(inicio); d > time.Second {
 		t.Fatalf("demorou %v, não respeitou o ctx", d)
 	}
+	if strings.Contains(err.Error(), cnpjBB) {
+		t.Fatalf("erro expõe o CNPJ (vai para o log): %v", err)
+	}
 }
 
 func TestRecusaSemChamar(t *testing.T) {
