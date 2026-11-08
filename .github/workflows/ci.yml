@@ -15,7 +15,7 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # stable + check-latest: pega o patch mais novo (correções da stdlib); go.mod fixa só o mínimo
           go-version: stable
