@@ -1,7 +1,7 @@
 # CGO desligado: binário estático e sem depender do toolchain C da máquina.
 export CGO_ENABLED=0
 
-.PHONY: dev banco test test-curto lint web-install
+.PHONY: dev banco test test-curto lint web-install e2e
 
 banco:
 	docker compose up -d postgres
@@ -28,3 +28,8 @@ lint:
 
 web-install:
 	npm --prefix web ci
+
+# e2e contra a pilha real: sobe postgres + api + web (nginx na 55173) e roda o spec, que chama a semente.
+e2e:
+	docker compose up -d --build --wait api web
+	set -a; . ./.env; set +a; AMBIENTE=desenvolvimento npm --prefix web run test:e2e
