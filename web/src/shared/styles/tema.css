@@ -23,6 +23,8 @@
   --border: oklch(0.92 0.004 260);
   --input: oklch(0.92 0.004 260);
   --ring: oklch(0.2 0.012 260);
+  /* Borda de campo de formulário: ≥3:1 sobre branco (WCAG 1.4.11). */
+  --borda-campo: oklch(0.64 0.01 260);
 
   --sinal-aprovado: oklch(0.72 0.17 155);
   --sinal-negado: oklch(0.63 0.22 25);
