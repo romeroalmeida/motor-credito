@@ -176,7 +176,7 @@ Cabeçalhos: `Authorization: Bearer ck_live_…`, `X-Timestamp`, `X-Assinatura`,
   "status": "contraproposta",
   "score": 642,
   "faixa_risco": "B",
-  "oferta": { "valor": 600000, "prazo": 24, "taxa_mensal_bps": 290, "parcela": 33742 },
+  "oferta": { "valor": 600000, "prazo": 24, "taxa_mensal_bps": 290, "parcela": 35048 },
   "pedido": { "valor": 1000000, "prazo": 24 },
   "motivos": [{ "codigo": "LIMITE_FAIXA", "texto": "Valor pedido acima do limite para o score" }],
   "antifraude": {
