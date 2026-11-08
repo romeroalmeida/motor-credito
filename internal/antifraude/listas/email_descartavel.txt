@@ -1,0 +1,18 @@
+# shortcut: amostra dos domínios descartáveis mais comuns;
+# trocar por lista mantida (ex.: disposable-email-domains) com atualização periódica.
+10minutemail.com
+dispostable.com
+emailondeck.com
+getnada.com
+guerrillamail.com
+maildrop.cc
+mailinator.com
+mailnesia.com
+mintemail.com
+mohmal.com
+sharklasers.com
+temp-mail.org
+tempmail.com
+throwawaymail.com
+trashmail.com
+yopmail.com

@@ -1,0 +1,11 @@
+# shortcut: amostra de blocos alocados ao Brasil (LACNIC/Registro.br), não a tabela completa;
+# trocar por base GeoIP atualizada (ex.: MaxMind GeoLite2 Country) antes de produção.
+177.0.0.0/8
+179.0.0.0/8
+186.192.0.0/10
+187.0.0.0/8
+189.0.0.0/8
+191.0.0.0/8
+200.128.0.0/9
+201.0.0.0/8
+2804::/16
