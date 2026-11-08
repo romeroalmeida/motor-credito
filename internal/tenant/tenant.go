@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oklog/ulid/v2"
 
+	"github.com/romeroalmeida/motor-credito/internal/auditoria"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
@@ -95,18 +96,22 @@ func (s *Servico) Buscar(ctx context.Context, tenantID string) (Tenant, error) {
 	return t, nil
 }
 
-// CriarChave cria uma chave sem nome. Ver CriarChaveComNome.
+// CriarChave cria uma chave sem nome, com ator "sistema". Ver CriarChaveComNome.
 func (s *Servico) CriarChave(ctx context.Context, tenantID string) (ChaveCriada, error) {
-	return s.CriarChaveComNome(ctx, tenantID, "")
+	return s.CriarChaveComNome(ctx, tenantID, "", "sistema")
 }
 
 // CriarChaveComNome gera id e segredo; o banco guarda o segredo cifrado (AES-GCM, AAD = id da chave).
-func (s *Servico) CriarChaveComNome(ctx context.Context, tenantID, nome string) (ChaveCriada, error) {
+// ator vai para a auditoria (auditoria.AtorUsuario etc.), na mesma transação.
+func (s *Servico) CriarChaveComNome(ctx context.Context, tenantID, nome, ator string) (ChaveCriada, error) {
 	var criada ChaveCriada
 	err := EmTenant(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var err error
-		criada, err = s.inserirChave(ctx, tx, tenantID, nome)
-		return err
+		if criada, err = s.inserirChave(ctx, tx, tenantID, nome); err != nil {
+			return err
+		}
+		return auditoria.Registrar(ctx, tx, tenantID, auditoria.EventoChaveCriada, ator, nil,
+			map[string]string{"chave_id": criada.ID, "nome": nome})
 	})
 	if err != nil {
 		return ChaveCriada{}, fmt.Errorf("criar chave: %w", err)
@@ -132,15 +137,28 @@ func (s *Servico) inserirChave(ctx context.Context, tx pgx.Tx, tenantID, nome st
 	return ChaveCriada{ID: id, Chave: prefixoChave + id, Segredo: segredo}, nil
 }
 
-// RevogarChave é idempotente; chave inexistente ou de outro tenant → ErrNaoEncontrado.
-func (s *Servico) RevogarChave(ctx context.Context, tenantID, chaveID string) error {
+// RevogarChave é idempotente (só a primeira revogação vai para a auditoria); chave inexistente ou de outro
+// tenant → ErrNaoEncontrado.
+func (s *Servico) RevogarChave(ctx context.Context, tenantID, chaveID, ator string) error {
 	err := EmTenant(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE chaves_api SET revogada_em = coalesce(revogada_em, now())
-			WHERE id = $1 AND tenant_id = $2`, chaveID, tenantID)
-		if err == nil && tag.RowsAffected() == 0 {
+		tag, err := tx.Exec(ctx, `UPDATE chaves_api SET revogada_em = now()
+			WHERE id = $1 AND tenant_id = $2 AND revogada_em IS NULL`, chaveID, tenantID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			return auditoria.Registrar(ctx, tx, tenantID, auditoria.EventoChaveRevogada, ator, nil,
+				map[string]string{"chave_id": chaveID})
+		}
+		var existe bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM chaves_api WHERE id = $1 AND tenant_id = $2)`,
+			chaveID, tenantID).Scan(&existe); err != nil {
+			return err
+		}
+		if !existe {
 			return ErrNaoEncontrado
 		}
-		return err
+		return nil
 	})
 	if err != nil && !errors.Is(err, ErrNaoEncontrado) {
 		return fmt.Errorf("revogar chave: %w", err)
@@ -150,7 +168,7 @@ func (s *Servico) RevogarChave(ctx context.Context, tenantID, chaveID string) er
 
 // GirarChave cria uma chave com o mesmo nome e revoga a antiga, na mesma transação.
 // Chave inexistente, já revogada ou de outro tenant → ErrNaoEncontrado.
-func (s *Servico) GirarChave(ctx context.Context, tenantID, chaveID string) (ChaveCriada, error) {
+func (s *Servico) GirarChave(ctx context.Context, tenantID, chaveID, ator string) (ChaveCriada, error) {
 	var criada ChaveCriada
 	err := EmTenant(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var nome string
@@ -162,8 +180,11 @@ func (s *Servico) GirarChave(ctx context.Context, tenantID, chaveID string) (Cha
 		if err != nil {
 			return err
 		}
-		criada, err = s.inserirChave(ctx, tx, tenantID, nome)
-		return err
+		if criada, err = s.inserirChave(ctx, tx, tenantID, nome); err != nil {
+			return err
+		}
+		return auditoria.Registrar(ctx, tx, tenantID, auditoria.EventoChaveGirada, ator, nil,
+			map[string]string{"chave_id": chaveID, "nova_chave_id": criada.ID})
 	})
 	if err != nil && !errors.Is(err, ErrNaoEncontrado) {
 		return ChaveCriada{}, fmt.Errorf("girar chave: %w", err)
@@ -194,7 +215,7 @@ func (s *Servico) ListarChaves(ctx context.Context, tenantID string) ([]Chave, e
 }
 
 // DefinirIPs troca a lista de IPs permitidos. Aceita IP solto (vira /32 ou /128) ou CIDR.
-func (s *Servico) DefinirIPs(ctx context.Context, tenantID string, ips []string) ([]netip.Prefix, error) {
+func (s *Servico) DefinirIPs(ctx context.Context, tenantID string, ips []string, ator string) ([]netip.Prefix, error) {
 	prefixos, err := ParsearIPs(ips)
 	if err != nil {
 		return nil, err
@@ -204,7 +225,14 @@ func (s *Servico) DefinirIPs(ctx context.Context, tenantID string, ips []string)
 		if err == nil && tag.RowsAffected() == 0 {
 			return ErrNaoEncontrado
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		textos := make([]string, len(prefixos))
+		for i, p := range prefixos {
+			textos[i] = p.String()
+		}
+		return auditoria.Registrar(ctx, tx, tenantID, auditoria.EventoIPsAlterados, ator, nil, map[string][]string{"ips": textos})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("definir IPs: %w", err)

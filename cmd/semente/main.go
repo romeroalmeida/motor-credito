@@ -96,7 +96,7 @@ func semear(ctx context.Context, pool *pgxpool.Pool, chaveCifra []byte) (demo, e
 			return demo{}, err
 		}
 	}
-	chave, err := tenant.NovoServico(pool, chaveCifra).CriarChaveComNome(ctx, tenantID, "demo")
+	chave, err := tenant.NovoServico(pool, chaveCifra).CriarChaveComNome(ctx, tenantID, "demo", "sistema:semente")
 	if err != nil {
 		return demo{}, err
 	}

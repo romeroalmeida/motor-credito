@@ -91,7 +91,7 @@ func testarMiddleware(t *testing.T, s *Servico) {
 		t.Fatal(err)
 	}
 	revogada, _ := s.CriarChave(ctx, "ten_a")
-	if err := s.RevogarChave(ctx, "ten_a", revogada.ID); err != nil {
+	if err := s.RevogarChave(ctx, "ten_a", revogada.ID, "teste"); err != nil {
 		t.Fatal(err)
 	}
 	corpo := `{"documento":"52998224725"}`
@@ -186,10 +186,10 @@ func testarMiddleware(t *testing.T, s *Servico) {
 	})
 
 	t.Run("ip permitido", func(t *testing.T) {
-		if _, err := s.DefinirIPs(ctx, "ten_a", []string{"200.150.10.0/24"}); err != nil {
+		if _, err := s.DefinirIPs(ctx, "ten_a", []string{"200.150.10.0/24"}, "teste"); err != nil {
 			t.Fatal(err)
 		}
-		defer func() { _, _ = s.DefinirIPs(ctx, "ten_a", nil) }()
+		defer func() { _, _ = s.DefinirIPs(ctx, "ten_a", nil, "teste") }()
 		for remote, quer := range map[string]int{"200.150.10.7:5555": 200, "200.150.11.7:5555": 401, "lixo": 401} {
 			q := assinada(chave, agora, corpo)
 			q.remote = remote
@@ -256,7 +256,7 @@ func testarIdempotencia(t *testing.T, s *Servico) {
 
 func testarIPs(t *testing.T, s *Servico) {
 	ctx := context.Background()
-	got, err := s.DefinirIPs(ctx, "ten_b", []string{"10.1.2.3", "10.0.0.9/8", "2001:db8::1"})
+	got, err := s.DefinirIPs(ctx, "ten_b", []string{"10.1.2.3", "10.0.0.9/8", "2001:db8::1"}, "teste")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,10 +268,10 @@ func testarIPs(t *testing.T, s *Servico) {
 	if txt := juntar(got); txt != quer || juntar(ten.IPsPermitidos) != quer {
 		t.Fatalf("IPs = %q / banco %q; quer %q", txt, juntar(ten.IPsPermitidos), quer)
 	}
-	if _, err := s.DefinirIPs(ctx, "ten_b", []string{"999.1.1.1"}); !errors.Is(err, ErrIPInvalido) {
+	if _, err := s.DefinirIPs(ctx, "ten_b", []string{"999.1.1.1"}, "teste"); !errors.Is(err, ErrIPInvalido) {
 		t.Fatalf("IP inválido: err = %v", err)
 	}
-	if _, err := s.DefinirIPs(ctx, "ten_b", make([]string, MaxIPsPermitidos+1)); !errors.Is(err, ErrIPInvalido) {
+	if _, err := s.DefinirIPs(ctx, "ten_b", make([]string, MaxIPsPermitidos+1), "teste"); !errors.Is(err, ErrIPInvalido) {
 		t.Fatalf("lista grande: err = %v", err)
 	}
 }
@@ -285,7 +285,7 @@ func juntar[T interface{ String() string }](xs []T) string {
 }
 
 func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
-	criada, err := s.CriarChaveComNome(ctx, "ten_a", "produção")
+	criada, err := s.CriarChaveComNome(ctx, "ten_a", "produção", "teste")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,10 +294,10 @@ func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
 	}
 
 	// Tenant B tentando mexer na chave do A: sempre 404 (ErrNaoEncontrado), e a chave segue intacta.
-	if err := s.RevogarChave(ctx, "ten_b", criada.ID); !errors.Is(err, ErrNaoEncontrado) {
+	if err := s.RevogarChave(ctx, "ten_b", criada.ID, "teste"); !errors.Is(err, ErrNaoEncontrado) {
 		t.Fatalf("revogar chave alheia: err = %v; quer ErrNaoEncontrado", err)
 	}
-	if _, err := s.GirarChave(ctx, "ten_b", criada.ID); !errors.Is(err, ErrNaoEncontrado) {
+	if _, err := s.GirarChave(ctx, "ten_b", criada.ID, "teste"); !errors.Is(err, ErrNaoEncontrado) {
 		t.Fatalf("girar chave alheia: err = %v; quer ErrNaoEncontrado", err)
 	}
 	if lista, _ := s.ListarChaves(ctx, "ten_b"); contem(lista, criada.ID) {
@@ -307,7 +307,7 @@ func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
 		t.Fatal("chave do A sumiu ou foi revogada pelo B")
 	}
 
-	nova, err := s.GirarChave(ctx, "ten_a", criada.ID)
+	nova, err := s.GirarChave(ctx, "ten_a", criada.ID, "teste")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,13 +315,13 @@ func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
 	if !revogadaEm(lista, criada.ID) || revogadaEm(lista, nova.ID) || nome(lista, nova.ID) != "produção" {
 		t.Fatalf("girar: antiga deveria estar revogada e a nova ativa com o mesmo nome: %+v", lista)
 	}
-	if _, err := s.GirarChave(ctx, "ten_a", criada.ID); !errors.Is(err, ErrNaoEncontrado) {
+	if _, err := s.GirarChave(ctx, "ten_a", criada.ID, "teste"); !errors.Is(err, ErrNaoEncontrado) {
 		t.Fatalf("girar chave já revogada: err = %v", err)
 	}
-	if err := s.RevogarChave(ctx, "ten_a", nova.ID); err != nil {
+	if err := s.RevogarChave(ctx, "ten_a", nova.ID, "teste"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RevogarChave(ctx, "ten_a", nova.ID); err != nil {
+	if err := s.RevogarChave(ctx, "ten_a", nova.ID, "teste"); err != nil {
 		t.Fatalf("revogar de novo deve ser idempotente: %v", err)
 	}
 }

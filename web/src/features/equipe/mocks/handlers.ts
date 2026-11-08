@@ -39,7 +39,37 @@ const convites: Schemas['Convite'][] = [
   },
 ]
 
+const naoEncontrado = () => HttpResponse.json({ erro: 'nao_encontrado' }, { status: 404 })
+const ultimoAdmin = () =>
+  HttpResponse.json(
+    { erro: 'ultimo_admin', mensagem: 'o tenant precisa de ao menos um admin' },
+    { status: 409 },
+  )
+const unicoAdmin = (m: Schemas['Membro']) =>
+  m.papel === 'admin' && membros.filter((x) => x.papel === 'admin').length <= 1
+
 export const handlers: HttpHandler[] = [
+  // Como no servidor: não rebaixa nem remove o último admin.
+  http.patch('*/painel/equipe/:id', async ({ params, request }) => {
+    const { papel } = (await request.json()) as { papel: Papel }
+    await delay()
+    const membro = membros.find((m) => m.usuario_id === params.id)
+    if (!membro) return naoEncontrado()
+    if (papel !== 'admin' && unicoAdmin(membro)) return ultimoAdmin()
+    membro.papel = papel
+    return HttpResponse.json(membro)
+  }),
+
+  http.delete('*/painel/equipe/:id', async ({ params }) => {
+    await delay()
+    const i = membros.findIndex((m) => m.usuario_id === params.id)
+    const membro = membros[i]
+    if (!membro) return naoEncontrado()
+    if (unicoAdmin(membro)) return ultimoAdmin()
+    membros.splice(i, 1)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.get('*/painel/equipe', async () => {
     await delay()
     return HttpResponse.json({ membros, convites })

@@ -711,6 +711,95 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/painel/equipe/{usuario_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        usuario_id: string
+      }
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    /**
+     * Remove o membro do tenant (derruba as sessões dele na hora)
+     * @description Apaga só a associação com o tenant da sessão; a conta continua (pode estar em outros tenants). Não remove o
+     *     último admin (409 `ultimo_admin`). Gera `equipe.membro_removido` na auditoria.
+     */
+    delete: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path: {
+          usuario_id: string
+        }
+        cookie?: never
+      }
+      requestBody?: never
+      responses: {
+        /** @description Removido */
+        204: {
+          headers: {
+            [name: string]: unknown
+          }
+          content?: never
+        }
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+        404: components['responses']['NaoEncontrado']
+        409: components['responses']['UltimoAdmin']
+      }
+    }
+    options?: never
+    head?: never
+    /**
+     * Troca o papel de um membro
+     * @description Só no tenant da sessão (membro de outro tenant → 404). Vale na request seguinte do membro. Não rebaixa o
+     *     último admin do tenant (409 `ultimo_admin`). Gera `equipe.papel_alterado` na auditoria.
+     */
+    patch: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path: {
+          usuario_id: string
+        }
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            papel: components['schemas']['Papel']
+          }
+        }
+      }
+      responses: {
+        /** @description Papel trocado */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['Membro']
+          }
+        }
+        400: components['responses']['CorpoInvalido']
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+        404: components['responses']['NaoEncontrado']
+        409: components['responses']['UltimoAdmin']
+      }
+    }
+    trace?: never
+  }
   '/painel/consultas': {
     parameters: {
       query?: never
@@ -1539,8 +1628,14 @@ export interface components {
     RegistroAuditoria: {
       seq: number
       /**
+       * @description consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
+       *     equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
+       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu. Os dados nunca levam e-mail, senha ou documento.
        * @example consulta.decidida
        * @example politica.publicada
+       * @example chave.criada
+       * @example equipe.membro_removido
+       * @example auth.falhou
        */
       evento: string
       /**
@@ -1828,6 +1923,21 @@ export interface components {
         /**
          * @example {
          *       "erro": "proibido"
+         *     }
+         */
+        'application/json': components['schemas']['Erro']
+      }
+    }
+    /** @description A operação deixaria o tenant sem admin */
+    UltimoAdmin: {
+      headers: {
+        [name: string]: unknown
+      }
+      content: {
+        /**
+         * @example {
+         *       "erro": "ultimo_admin",
+         *       "mensagem": "o tenant precisa de ao menos um admin"
          *     }
          */
         'application/json': components['schemas']['Erro']

@@ -80,6 +80,8 @@ func (h *Handlers) Rotas(r chi.Router) {
 			r.Post("/painel/chaves/{id}/girar", h.girarChave)
 			r.Get("/painel/equipe", h.listarEquipe)
 			r.Post("/painel/equipe", h.convidar)
+			r.Patch("/painel/equipe/{usuario_id}", h.trocarPapel)
+			r.Delete("/painel/equipe/{usuario_id}", h.removerMembro)
 		})
 	})
 }

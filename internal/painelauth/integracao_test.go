@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/pquerna/otp/totp"
 
+	"github.com/romeroalmeida/motor-credito/internal/auditoria"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma/bancoteste"
 	"github.com/romeroalmeida/motor-credito/internal/tenant"
@@ -59,6 +61,8 @@ func TestIntegracao(t *testing.T) {
 	t.Run("convite e cadastro", a.testarConviteECadastro)
 	t.Run("cadastro não revela e-mail com conta", a.testarCadastroSemEnumeracao)
 	t.Run("sair", a.testarSair)
+	t.Run("equipe: remover e trocar papel", a.testarRemoverETrocarPapel)
+	t.Run("auditoria de chaves, equipe e auth", a.testarAuditoriaDeAcesso) // depois de todos: conta o que eles fizeram
 }
 
 func (a *ambiente) exec(sql string, args ...any) {
@@ -478,4 +482,103 @@ func (a *ambiente) testarInatividade(t *testing.T) {
 	}
 	a.exec(`UPDATE sessoes SET ultimo_uso_em = now() - interval '31 minutes' WHERE usuario_id = $1`, u.id)
 	quer(t, c.fazer("GET", "/painel/auth/eu", "", false), 401, "nao_autorizado")
+}
+
+// Achado 1: admin remove membro e troca papel, só no próprio tenant, sem nunca zerar os admins.
+func (a *ambiente) testarRemoverETrocarPapel(t *testing.T) {
+	a.exec(`INSERT INTO tenants (id, nome) VALUES ('ten_c', 'ten_c')`)
+	admin := a.entrar(t, a.semear(t, "ten_c", "admin1.c@exemplo.com", PapelAdmin))
+	admin2 := a.semear(t, "ten_c", "admin2.c@exemplo.com", PapelAdmin)
+	analista := a.semear(t, "ten_c", "analista.c@exemplo.com", PapelAnalista)
+	sessAnalista := a.entrar(t, analista)
+	deB := a.semear(t, "ten_b", "membro.b@exemplo.com", PapelAnalista)
+	euAdmin := strings.Split(strings.Split(admin.fazer("GET", "/painel/auth/eu", "", false).Body.String(), `"id":"`)[1], `"`)[0]
+
+	// Não-admin não mexe na equipe.
+	quer(t, sessAnalista.fazer("DELETE", "/painel/equipe/"+admin2.id, ``, true), 403, "proibido")
+	quer(t, sessAnalista.fazer("PATCH", "/painel/equipe/"+admin2.id, `{"papel":"auditor"}`, true), 403, "proibido")
+	// CSRF vale também aqui.
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+analista.id, ``, false), 403, "csrf_invalido")
+
+	// Membro de outro tenant: 404 e nada muda lá.
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+deB.id, ``, true), 404, "nao_encontrado")
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+deB.id, `{"papel":"admin"}`, true), 404, "nao_encontrado")
+	quer(t, admin.fazer("DELETE", "/painel/equipe/usr_inexistente", ``, true), 404, "nao_encontrado")
+	var papelB string
+	if err := a.b.Dono.QueryRow(context.Background(), `SELECT papel FROM associacoes WHERE usuario_id = $1 AND tenant_id = 'ten_b'`,
+		deB.id).Scan(&papelB); err != nil || papelB != "analista" {
+		t.Fatalf("membro do B mudou: %q %v", papelB, err)
+	}
+
+	// Troca de papel vale na request seguinte da sessão do alvo.
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+analista.id, `{"papel":"chefe"}`, true), 400, "corpo_invalido")
+	w := admin.fazer("PATCH", "/painel/equipe/"+analista.id, `{"papel":"auditor"}`, true)
+	quer(t, w, 200, "")
+	if !strings.Contains(w.Body.String(), `"papel":"auditor"`) || !strings.Contains(w.Body.String(), `"usuario_id":"`+analista.id+`"`) {
+		t.Fatalf("PATCH = %s", w.Body)
+	}
+	if eu := sessAnalista.fazer("GET", "/painel/auth/eu", "", false).Body.String(); !strings.Contains(eu, `"papel":"auditor"`) {
+		t.Fatalf("papel novo não valeu na sessão: %s", eu)
+	}
+
+	// Remover derruba as sessões do removido na hora.
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+analista.id, ``, true), 204, "")
+	quer(t, sessAnalista.fazer("GET", "/painel/auth/eu", "", false), 401, "nao_autorizado")
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+analista.id, ``, true), 404, "nao_encontrado")
+
+	// Último admin: com dois, rebaixar um vale; depois o que sobrou não sai nem é rebaixado.
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+admin2.id, `{"papel":"analista"}`, true), 200, "")
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+euAdmin, `{"papel":"analista"}`, true), 409, "ultimo_admin")
+	quer(t, admin.fazer("DELETE", "/painel/equipe/"+euAdmin, ``, true), 409, "ultimo_admin")
+	quer(t, admin.fazer("PATCH", "/painel/equipe/"+euAdmin, `{"papel":"admin"}`, true), 200, "") // admin → admin não tira ninguém
+	quer(t, admin.fazer("GET", "/painel/auth/eu", "", false), 200, "")
+}
+
+// Achado 1: chaves, IPs, equipe e auth deixam rastro na cadeia, sem e-mail em claro.
+func (a *ambiente) testarAuditoriaDeAcesso(t *testing.T) {
+	contar := func(tenantID, evento string) int {
+		var n int
+		if err := a.b.Dono.QueryRow(context.Background(), `SELECT count(*) FROM auditoria WHERE tenant_id = $1 AND evento = $2`,
+			tenantID, evento).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	admin := a.entrar(t, a.semear(t, "ten_c", "audita.c@exemplo.com", PapelAdmin))
+	w := admin.fazer("POST", "/painel/chaves", `{"nome":"para revogar"}`, true)
+	quer(t, w, 201, "")
+	var criada chaveCriadaJSON
+	_ = json.Unmarshal(w.Body.Bytes(), &criada)
+	quer(t, admin.fazer("DELETE", "/painel/chaves/"+criada.ID, ``, true), 204, "")
+	quer(t, admin.fazer("DELETE", "/painel/chaves/"+criada.ID, ``, true), 204, "") // idempotente: audita uma vez só
+	if n := contar("ten_c", auditoria.EventoChaveRevogada); n != 1 {
+		t.Fatalf("revogações auditadas = %d; quer 1", n)
+	}
+	// Feitos pelos subtestes anteriores: chaves e IPs no ten_b; equipe no ten_a/ten_c; login, 2FA e sair no ten_a.
+	for _, c := range []struct{ tenant, evento string }{
+		{"ten_b", auditoria.EventoChaveCriada}, {"ten_b", auditoria.EventoChaveGirada},
+		{"ten_c", auditoria.EventoChaveRevogada}, {"ten_b", auditoria.EventoIPsAlterados},
+		{"ten_a", auditoria.EventoConviteCriado}, {"ten_a", auditoria.EventoConviteAceito},
+		{"ten_c", auditoria.EventoPapelAlterado}, {"ten_c", auditoria.EventoMembroRemovido},
+		{"ten_a", auditoria.EventoLoginOK}, {"ten_a", auditoria.EventoLoginFalhou},
+		{"ten_a", auditoria.EventoDoisFatoresFalhou}, {"ten_a", auditoria.EventoSaiu},
+	} {
+		if contar(c.tenant, c.evento) == 0 {
+			t.Errorf("nenhum %s auditado em %s", c.evento, c.tenant)
+		}
+	}
+	var comEmail int
+	if err := a.b.Dono.QueryRow(context.Background(), `SELECT count(*) FROM auditoria WHERE dados::text LIKE '%@%'`).Scan(&comEmail); err != nil {
+		t.Fatal(err)
+	}
+	if comEmail != 0 {
+		t.Fatalf("%d registros de auditoria com e-mail em claro", comEmail)
+	}
+	for _, ten := range []string{"ten_a", "ten_b", "ten_c"} {
+		if err := tenant.EmTenant(context.Background(), a.b.App, ten, func(tx pgx.Tx) error {
+			return auditoria.Verificar(context.Background(), tx, ten)
+		}); err != nil {
+			t.Fatalf("cadeia de %s: %v", ten, err)
+		}
+	}
 }

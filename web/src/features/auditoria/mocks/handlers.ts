@@ -9,14 +9,19 @@ type Registro = Schemas['RegistroAuditoria']
 export const SEQ_ADULTERADO = 7
 const TOTAL = 60
 
+// Os dois mais novos são eventos de acesso (equipe e auth), sem consulta.
+const ACESSO: Record<number, string> = { 60: 'equipe.membro_removido', 59: 'auth.falhou' }
+
 const REGISTROS: Registro[] = Array.from({ length: TOTAL }, (_, i) => {
   const seq = TOTAL - i
+  const acesso = ACESSO[seq]
   const publicacao = seq % 10 === 1
+  const porUsuario = publicacao || acesso !== undefined
   return {
     seq,
-    evento: publicacao ? 'politica.publicada' : 'consulta.decidida',
-    ator: publicacao ? 'usuario:usr_01JC8ZK3Q0ADMIN0000000000' : 'api:chv_01JC8ZK3Q0PRODUCAO00000',
-    consulta_id: publicacao ? null : `cons_01JC8ZK3Q0${String(seq).padStart(14, '0')}`,
+    evento: acesso ?? (publicacao ? 'politica.publicada' : 'consulta.decidida'),
+    ator: porUsuario ? 'usuario:usr_01JC8ZK3Q0ADMIN0000000000' : 'api:chv_01JC8ZK3Q0PRODUCAO00000',
+    consulta_id: porUsuario ? null : `cons_01JC8ZK3Q0${String(seq).padStart(14, '0')}`,
     criado_em: new Date(Date.UTC(2026, 10, 7, 12, 0, 0) - i * 60_000).toISOString(),
     hash_ok: seq !== SEQ_ADULTERADO,
   }

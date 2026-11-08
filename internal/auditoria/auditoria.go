@@ -17,10 +17,25 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Eventos gravados pela aplicação.
+// Eventos gravados pela aplicação. Os dados nunca levam e-mail, senha, token ou documento em claro.
 const (
 	EventoConsultaDecidida  = "consulta.decidida"
 	EventoPoliticaPublicada = "politica.publicada"
+
+	EventoChaveCriada   = "chave.criada"   // {chave_id, nome}
+	EventoChaveGirada   = "chave.girada"   // {chave_id, nova_chave_id}
+	EventoChaveRevogada = "chave.revogada" // {chave_id}
+	EventoIPsAlterados  = "chave.ips_alterados"
+
+	EventoConviteCriado  = "equipe.convite_criado"  // {convite_id, papel}
+	EventoConviteAceito  = "equipe.convite_aceito"  // {convite_id, papel}; ator = quem se cadastrou
+	EventoMembroRemovido = "equipe.membro_removido" // {usuario_id, papel}
+	EventoPapelAlterado  = "equipe.papel_alterado"  // {usuario_id, de, para}
+
+	EventoLoginOK           = "auth.entrou"     // senha + TOTP ok; {ip}
+	EventoLoginFalhou       = "auth.falhou"     // senha errada de usuário existente; {ip}
+	EventoDoisFatoresFalhou = "auth.2fa_falhou" // {ip}
+	EventoSaiu              = "auth.saiu"
 )
 
 var hashInicial = make([]byte, sha256.Size)

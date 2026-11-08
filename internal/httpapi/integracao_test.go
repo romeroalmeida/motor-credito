@@ -72,7 +72,7 @@ func novoAmbiente(t *testing.T) *ambiente {
 	a.dono(`INSERT INTO sessoes (id, token_hash, csrf_hash, usuario_id, tenant_id, dois_fatores_em, expira_em)
 		VALUES ($1, $2, $3, $4, $5, now(), now() + interval '1 hour')`,
 		plataforma.NovoID("ses"), hash(a.sessAuditorA.token), hash(a.sessAuditorA.csrf), aud, a.tenantA)
-	chave, err := tenants.CriarChaveComNome(ctx, a.tenantA, "teste")
+	chave, err := tenants.CriarChaveComNome(ctx, a.tenantA, "teste", "sistema")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func (a *ambiente) testarAuditoria(t *testing.T) {
 		t.Fatalf("B vê %d registros de auditoria, não só os dele", len(b.Itens))
 	}
 
-	a.dono(`UPDATE auditoria SET dados = jsonb_set(dados, '{status}', '"aprovado"') WHERE tenant_id = $1 AND seq = 3`, a.tenantA)
+	a.dono(`UPDATE auditoria SET dados = jsonb_set(dados, '{adulterado}', 'true') WHERE tenant_id = $1 AND seq = 3`, a.tenantA)
 	if i := decodificar[integridade](t, a.painel(a.sessAuditorA, http.MethodGet, "/painel/auditoria/integridade", ""), http.StatusOK); i.Integra || !strings.Contains(i.Mensagem, "seq 3") {
 		t.Fatalf("adulteração não detectada pela rota: %+v", i)
 	}

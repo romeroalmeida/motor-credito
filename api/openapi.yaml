@@ -372,6 +372,50 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Erro" }
 
+  /painel/equipe/{usuario_id}:
+    parameters:
+      - { name: usuario_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [equipe]
+      summary: Troca o papel de um membro
+      description: |
+        Só no tenant da sessão (membro de outro tenant → 404). Vale na request seguinte do membro. Não rebaixa o
+        último admin do tenant (409 `ultimo_admin`). Gera `equipe.papel_alterado` na auditoria.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [papel]
+              properties:
+                papel: { $ref: "#/components/schemas/Papel" }
+      responses:
+        "200":
+          description: Papel trocado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membro" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/UltimoAdmin" }
+    delete:
+      tags: [equipe]
+      summary: Remove o membro do tenant (derruba as sessões dele na hora)
+      description: |
+        Apaga só a associação com o tenant da sessão; a conta continua (pode estar em outros tenants). Não remove o
+        último admin (409 `ultimo_admin`). Gera `equipe.membro_removido` na auditoria.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      responses:
+        "204": { description: Removido }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+        "409": { $ref: "#/components/responses/UltimoAdmin" }
+
   # ------------------------------------------------------------------ Painel: consultas (admin, analista)
   /painel/consultas:
     get:
@@ -747,6 +791,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Erro" }
           example: { erro: proibido }
+    UltimoAdmin:
+      description: A operação deixaria o tenant sem admin
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Erro" }
+          example: { erro: ultimo_admin, mensagem: o tenant precisa de ao menos um admin }
     NaoEncontrado:
       description: Não existe ou é de outro tenant
       content:
@@ -916,7 +966,13 @@ components:
       required: [seq, evento, ator, consulta_id, criado_em, hash_ok]
       properties:
         seq: { type: integer }
-        evento: { type: string, examples: [consulta.decidida, politica.publicada] }
+        evento:
+          type: string
+          description: |
+            consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
+            equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
+            auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu. Os dados nunca levam e-mail, senha ou documento.
+          examples: [consulta.decidida, politica.publicada, chave.criada, equipe.membro_removido, auth.falhou]
         ator: { type: string, examples: ["api:<chave_id>", "usuario:<id>"] }
         consulta_id: { type: [string, "null"] }
         criado_em: { type: string, format: date-time }

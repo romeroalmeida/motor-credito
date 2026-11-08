@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/romeroalmeida/motor-credito/internal/auditoria"
 	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 	"github.com/romeroalmeida/motor-credito/internal/tenant"
 )
@@ -20,7 +22,11 @@ const (
 	maxEmail        = 254
 )
 
-var errJaMembroOuConvidado = errors.New("e-mail já é membro ou tem convite pendente")
+var (
+	errJaMembroOuConvidado = errors.New("e-mail já é membro ou tem convite pendente")
+	errMembroInexistente   = errors.New("membro não encontrado neste tenant")
+	errUltimoAdmin         = errors.New("o tenant precisa de ao menos um admin")
+)
 
 type membroJSON struct {
 	UsuarioID string    `json:"usuario_id"`
@@ -120,10 +126,14 @@ func (h *Handlers) convidar(w http.ResponseWriter, r *http.Request) {
 		if existe {
 			return errJaMembroOuConvidado
 		}
-		return tx.QueryRow(r.Context(), `INSERT INTO convites (id, tenant_id, email, papel, token_hash, criado_por, expira_em)
+		if err := tx.QueryRow(r.Context(), `INSERT INTO convites (id, tenant_id, email, papel, token_hash, criado_por, expira_em)
 			VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7)) RETURNING criado_em, expira_em`,
 			cv.ID, s.TenantID, cv.Email, string(cv.Papel), hashToken(token), s.UsuarioID, validadeConvite.Seconds()).
-			Scan(&cv.CriadoEm, &cv.ExpiraEm)
+			Scan(&cv.CriadoEm, &cv.ExpiraEm); err != nil {
+			return err
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoConviteCriado, auditoria.AtorUsuario(s.UsuarioID),
+			nil, map[string]string{"convite_id": cv.ID, "papel": string(cv.Papel)})
 	})
 	if errors.Is(err, errJaMembroOuConvidado) {
 		responder(w, http.StatusConflict, map[string]string{"erro": "conflito", "mensagem": err.Error()})
@@ -147,4 +157,109 @@ func validarConvite(email string, papel Papel) map[string]string {
 		campos["papel"] = "use admin, analista ou auditor"
 	}
 	return campos
+}
+
+// trocarPapel: PATCH /painel/equipe/{usuario_id} {"papel": ...}. Só no tenant da sessão; não rebaixa o último admin.
+func (h *Handlers) trocarPapel(w http.ResponseWriter, r *http.Request) {
+	s, _ := SessaoDoContexto(r.Context())
+	var c struct {
+		Papel Papel `json:"papel"`
+	}
+	if !ler(w, r, &c, false) {
+		return
+	}
+	if !c.Papel.valido() {
+		erroCampos(w, map[string]string{"papel": "use admin, analista ou auditor"})
+		return
+	}
+	alvo := chi.URLParam(r, "usuario_id")
+	var m membroJSON
+	err := tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
+		atual, err := travarMembro(r.Context(), tx, s.TenantID, alvo, c.Papel != PapelAdmin)
+		if err != nil {
+			return err
+		}
+		if err := tx.QueryRow(r.Context(), `UPDATE associacoes a SET papel = $3 FROM usuarios u
+			WHERE a.usuario_id = $1 AND a.tenant_id = $2 AND u.id = a.usuario_id
+			RETURNING u.id, u.nome, u.email, a.papel, a.criado_em`, alvo, s.TenantID, string(c.Papel)).
+			Scan(&m.UsuarioID, &m.Nome, &m.Email, &m.Papel, &m.Desde); err != nil {
+			return err
+		}
+		if atual == c.Papel {
+			return nil
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoPapelAlterado, auditoria.AtorUsuario(s.UsuarioID),
+			nil, map[string]string{"usuario_id": alvo, "de": string(atual), "para": string(c.Papel)})
+	})
+	if responderErroEquipe(w, r, err) {
+		return
+	}
+	m.Desde = m.Desde.UTC()
+	responder(w, http.StatusOK, m)
+}
+
+// removerMembro: DELETE /painel/equipe/{usuario_id}. Apaga só a associação com o tenant da sessão; as sessões
+// caem na hora (auth_sessao exige a associação). Não remove o último admin.
+func (h *Handlers) removerMembro(w http.ResponseWriter, r *http.Request) {
+	s, _ := SessaoDoContexto(r.Context())
+	alvo := chi.URLParam(r, "usuario_id")
+	err := tenant.EmTenant(r.Context(), h.pool, s.TenantID, func(tx pgx.Tx) error {
+		atual, err := travarMembro(r.Context(), tx, s.TenantID, alvo, true)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM associacoes WHERE usuario_id = $1 AND tenant_id = $2`, alvo, s.TenantID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `UPDATE sessoes SET encerrada_em = now()
+			WHERE usuario_id = $1 AND tenant_id = $2 AND encerrada_em IS NULL`, alvo, s.TenantID); err != nil {
+			return err
+		}
+		return auditoria.Registrar(r.Context(), tx, s.TenantID, auditoria.EventoMembroRemovido, auditoria.AtorUsuario(s.UsuarioID),
+			nil, map[string]string{"usuario_id": alvo, "papel": string(atual)})
+	})
+	if responderErroEquipe(w, r, err) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// travarMembro trava os admins do tenant (FOR UPDATE: duas remoções simultâneas não zeram os admins) e devolve o
+// papel atual do alvo. saiDeAdmin = a operação tira o alvo do papel admin.
+func travarMembro(ctx context.Context, tx pgx.Tx, tenantID, usuarioID string, saiDeAdmin bool) (Papel, error) {
+	linhas, err := tx.Query(ctx, `SELECT usuario_id FROM associacoes WHERE tenant_id = $1 AND papel = 'admin' FOR UPDATE`, tenantID)
+	if err != nil {
+		return "", err
+	}
+	admins, err := pgx.CollectRows(linhas, pgx.RowTo[string])
+	if err != nil {
+		return "", err
+	}
+	var papel Papel
+	err = tx.QueryRow(ctx, `SELECT papel FROM associacoes WHERE usuario_id = $1 AND tenant_id = $2 FOR UPDATE`,
+		usuarioID, tenantID).Scan(&papel)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errMembroInexistente
+	}
+	if err != nil {
+		return "", err
+	}
+	if saiDeAdmin && papel == PapelAdmin && len(admins) <= 1 {
+		return "", errUltimoAdmin
+	}
+	return papel, nil
+}
+
+func responderErroEquipe(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, errMembroInexistente):
+		escreverErro(w, http.StatusNotFound, "nao_encontrado")
+	case errors.Is(err, errUltimoAdmin):
+		responder(w, http.StatusConflict, map[string]string{"erro": "ultimo_admin", "mensagem": errUltimoAdmin.Error()})
+	default:
+		falhaInterna(w, r, err)
+	}
+	return true
 }
