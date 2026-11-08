@@ -198,3 +198,27 @@ Checagens e nomes de sinal: tabela do desenho §6. Pesos em constantes nomeadas.
 - **B:** tudo da seção B + testes em tabela (limites 300/301 e 600/601 do modelo PF; contraproposta ligada/desligada; renda ausente → limite fixo; regra com `renda` sem `has()` recusada; expressão com custo excessivo recusada; operador fora da lista recusado; faixa `Nega`; nenhum corte bate). Mutação provada em ordem de cortes, ordem de faixas, `min` do limite e `<=` do pedido.
 - **C:** tudo da seção C + testes (cada checagem pulada quando o dado falta; velocidade no limite N e N+1; nome com acento/caixa/preposição; risco limitado a 100; simulado determinístico e respeitando ctx/atraso).
 - **D:** painel completo contra o `api/openapi.yaml` com MSW: Entrar (senha → 2FA), Visão geral, Consultas (lista com filtros + detalhe com trilha de regras e versão), Política (abas Corte/Faixas/Contraproposta; editor visual de condições; modo avançado CEL; rascunho → testar com CPF → publicar com confirmação; histórico com diferença e reverter), Chaves (segredo mostrado uma vez, girar, revogar, IPs), Equipe. Direção visual do desenho §8 (ver `docs/referencias/ui-pinterest-695032155015577928.jpg`), responsivo, acessível, cor nunca sozinha. Use a skill `front-architecture` (já respondida: os defaults acima valem, não pergunte) e `cleancode`. Vitest nos componentes do editor de política e na máscara de CPF/CNPJ. Não crie e2e (fica para E, com API real).
+
+## Notas para E (vindas dos relatórios da onda 1)
+
+**Ordem bureau → antifraude (corrige o contrato).** `antifraude.Entrada` exige o `bureau.Resultado`, então não há paralelismo: o bureau roda primeiro e o antifraude depois, os dois dentro do mesmo `context.WithTimeout(2s)`. Se o bureau falhar ou estourar o tempo, a resposta é `negado` com `BUREAU_INDISPONIVEL` e o antifraude nem roda. Se o `Contador` der erro, `Avaliar` aborta: a resposta também é negada, nunca aprovada.
+
+**Política (B, `bbbceff`)**
+- `Avaliar` pode devolver erro (custo estourado, pedido inválido) → `negado`, nunca aprovado.
+- `FaixaRisco` vazia vira `null` na resposta.
+- `documento_invalido` (dígito inválido ou bureau dizendo `falecido`) e `BUREAU_INDISPONIVEL` ficam com E.
+- `ErroPolitica{Problemas}` preenche os `detalhes` do 422 na publicação.
+- O módulo do CEL é `cel.dev/cel-go`, como está no go.mod.
+
+**Antifraude e bureau (C, `80966c9`)**
+- `bureau.Consultar` devolve `documento.ErrInvalido` quando o documento é inválido.
+- Os documentos de fixture estão em `internal/bureau/README.md`.
+
+**Tenant e auth (A, `a3359c7`)**
+- Montagem: `h := painelauth.Novo(poolApp, tenant.NovoServico(poolApp), painelauth.Opcoes{ChaveCifra: cfg.ChaveCifraDoc, CookieInseguro: painelauth.CookieInseguroPermitido(os.Getenv("COOKIE_INSEGURO_DEV"), cfg.Ambiente), URLPainel: ...})`, depois `h.Rotas(r)` (registra os caminhos completos `/painel/...`). As outras rotas do painel usam `h.MiddlewareSessao` e `painelauth.ExigirPapel`.
+- `servico.MiddlewareAPI` já lê o corpo (limite de 64 KB) e devolve o corpo ao handler. Ele põe `TenantDoContexto` e `ChaveDoContexto` no contexto (o id da chave serve para o ator `api:<id>` na auditoria).
+- A chave do HMAC é a string inteira `ck_live_<id>_<segredo>`; o helper é `tenant.Assinar`.
+- Idempotência: `ErrIdempotenciaConflito` → 409, `ErrIdempotenciaChaveInvalida` → 400. E calcula o hash do corpo.
+- `tenant.EmTenant(ctx, pool, tenantID, fn)` faz o `SET LOCAL app.tenant_id`; o repositório deve reusar.
+- O IP vem de `r.RemoteAddr`. Não confie em `X-Forwarded-For` sem uma lista de proxies confiáveis.
+- O convite para um e-mail que já tem conta responde 409: acrescente essa resposta no OpenAPI.
