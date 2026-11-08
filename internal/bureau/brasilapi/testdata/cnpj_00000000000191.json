@@ -1,0 +1,109 @@
+{
+  "uf": "DF",
+  "cep": "70040912",
+  "cnpj": "00000000000191",
+  "pais": null,
+  "email": null,
+  "porte": "DEMAIS",
+  "bairro": "ASA NORTE",
+  "numero": "SN",
+  "ddd_fax": "6134931040",
+  "municipio": "BRASILIA",
+  "logradouro": "SAUN QUADRA 5 BLOCO B TORRE I, II, III",
+  "cnae_fiscal": 6422100,
+  "codigo_pais": null,
+  "complemento": "ANDAR T I SL S101 A S1602 T II SL C101 A C1602 TIII SL N101 A N1602",
+  "codigo_porte": 5,
+  "razao_social": "BANCO DO BRASIL SA",
+  "nome_fantasia": "DIRECAO GERAL",
+  "capital_social": 120000000000,
+  "ddd_telefone_1": "6134939002",
+  "ddd_telefone_2": "",
+  "opcao_pelo_mei": false,
+  "codigo_municipio": 9701,
+  "cnaes_secundarios": [
+    {
+      "codigo": 6499999,
+      "descricao": "Outras atividades de serviços financeiros não especificadas anteriormente"
+    }
+  ],
+  "natureza_juridica": "Sociedade de Economia Mista",
+  "regime_tributario": [
+    {
+      "ano": 2016,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2017,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2018,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2019,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2020,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2021,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2022,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2023,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    },
+    {
+      "ano": 2024,
+      "cnpj_da_scp": null,
+      "forma_de_tributacao": "LUCRO REAL",
+      "quantidade_de_escrituracoes": 1
+    }
+  ],
+  "situacao_especial": "",
+  "opcao_pelo_simples": false,
+  "situacao_cadastral": 2,
+  "data_opcao_pelo_mei": "2009-07-01",
+  "data_exclusao_do_mei": "2009-07-01",
+  "cnae_fiscal_descricao": "Bancos múltiplos, com carteira comercial",
+  "codigo_municipio_ibge": 5300108,
+  "data_inicio_atividade": "1966-08-01",
+  "data_situacao_especial": null,
+  "data_opcao_pelo_simples": "2007-07-01",
+  "data_situacao_cadastral": "2005-11-03",
+  "nome_cidade_no_exterior": "",
+  "codigo_natureza_juridica": 2038,
+  "data_exclusao_do_simples": "2007-07-01",
+  "motivo_situacao_cadastral": 0,
+  "ente_federativo_responsavel": "",
+  "identificador_matriz_filial": 1,
+  "qualificacao_do_responsavel": 10,
+  "descricao_situacao_cadastral": "ATIVA",
+  "descricao_tipo_de_logradouro": "QUADRA",
+  "descricao_motivo_situacao_cadastral": "SEM MOTIVO",
+  "descricao_identificador_matriz_filial": "MATRIZ"
+}

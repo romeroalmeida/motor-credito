@@ -858,7 +858,7 @@ components:
           items:
             type: string
             enum: [cpf_irregular, cnpj_inativo, velocidade_alta, nome_divergente, nascimento_divergente,
-                   email_descartavel, ip_estrangeiro, ip_datacenter, dispositivo_multiplos_cpfs]
+                   email_descartavel, ip_estrangeiro, ip_datacenter, dispositivo_multiplos_cpfs, cnpj_recente]
         checagens_executadas: { type: array, items: { $ref: "#/components/schemas/Checagem" } }
         checagens_puladas: { type: array, items: { $ref: "#/components/schemas/Checagem" } }
 

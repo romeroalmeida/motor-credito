@@ -15,6 +15,8 @@ const (
 	Irregular Situacao = "irregular"
 	Falecido  Situacao = "falecido"
 	Inativo   Situacao = "inativo"
+	// Inexistente: o documento não consta na base consultada (ex.: CNPJ sem registro). A orquestração trata como documento_invalido.
+	Inexistente Situacao = "inexistente"
 )
 
 // Resultado é o que o bureau devolve. Campo vazio ("" ou nil) significa que o bureau não tem o dado.
@@ -26,6 +28,7 @@ type Resultado struct {
 	Nascimento            string // AAAA-MM-DD
 	Situacao              Situacao
 	Renda                 *int64 // centavos/mês
+	Abertura              string // AAAA-MM-DD, data de início de atividade do CNPJ
 }
 
 // Bureau consulta um documento já normalizado.
