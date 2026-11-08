@@ -57,8 +57,19 @@ export interface paths {
      * @description Síncrona. Bureau indisponível vira decisão `negado` com motivo `BUREAU_INDISPONIVEL`, nunca erro.
      *     Documento com dígito inválido ou de pessoa falecida vira `documento_invalido` (200).
      *
-     *     Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + corpo bruto)).
-     *     `X-Timestamp` em segundos Unix; fora de ±5 min é recusado.
+     *     Autenticação: `Authorization: Bearer ck_live_<id>` (só o id; o segredo **nunca** vai em cabeçalho).
+     *
+     *     Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + Idempotency-Key + "." + corpo bruto)).
+     *     Sem `Idempotency-Key`, o trecho do meio fica vazio (`timestamp + ".." + corpo`). `X-Timestamp` em segundos
+     *     Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
+     *     trocando a chave de idempotência.
+     *
+     *     Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
+     *
+     *     ```sh
+     *     printf '%s' '1700000000.pedido-1.{"a":1}' | openssl dgst -sha256 -hmac segredo
+     *     # 978ceb5cda878cb0610bead92cb859f485f02688364eb6f30b182abdbe92906a
+     *     ```
      */
     post: {
       parameters: {
@@ -1689,7 +1700,7 @@ export interface components {
     Chave: {
       id: string
       nome: string
-      /** @description "ck_live_<id>_…" (sem o segredo) */
+      /** @description "ck_live_<id>": o id público que vai no Bearer (não é segredo) */
       prefixo: string
       /** Format: date-time */
       criada_em: string
@@ -1700,7 +1711,9 @@ export interface components {
     }
     ChaveCriada: {
       id: string
-      /** @description Completo: "ck_live_<id>_<segredo>". Mostrado uma única vez. */
+      /** @description "ck_live_<id>": vai no cabeçalho Authorization: Bearer */
+      chave: string
+      /** @description Chave do HMAC de X-Assinatura. Mostrado uma única vez; o servidor guarda cifrado. */
       segredo: string
     }
     IPsPermitidos: {

@@ -59,12 +59,14 @@ func rodar() error {
 	fmt.Printf("admin:         %s\n", emailAdmin)
 	fmt.Printf("senha:         %s\n", d.senha)
 	fmt.Printf("segredo TOTP:  %s\n", d.segredoTOTP)
+	// chave de API vai no Authorization: Bearer; o segredo só assina (X-Assinatura) e nunca vai em cabeçalho.
 	fmt.Printf("chave de API:  %s\n", d.chaveAPI)
+	fmt.Printf("segredo API:   %s\n", d.segredoAPI)
 	return nil
 }
 
 // demo é o que a semente imprime (segredos só no terminal de quem rodou).
-type demo struct{ tenantID, senha, segredoTOTP, chaveAPI string }
+type demo struct{ tenantID, senha, segredoTOTP, chaveAPI, segredoAPI string }
 
 // Permitida aplica as duas travas.
 func Permitida(seedDemo string, cfg plataforma.Config) bool {
@@ -94,11 +96,11 @@ func semear(ctx context.Context, pool *pgxpool.Pool, chaveCifra []byte) (demo, e
 			return demo{}, err
 		}
 	}
-	chave, err := tenant.NovoServico(pool).CriarChaveComNome(ctx, tenantID, "demo")
+	chave, err := tenant.NovoServico(pool, chaveCifra).CriarChaveComNome(ctx, tenantID, "demo")
 	if err != nil {
 		return demo{}, err
 	}
-	return demo{tenantID: tenantID, senha: senha, segredoTOTP: segredo, chaveAPI: chave.Segredo}, nil
+	return demo{tenantID: tenantID, senha: senha, segredoTOTP: segredo, chaveAPI: chave.Chave, segredoAPI: chave.Segredo}, nil
 }
 
 // garantirAdmin cria tenant + admin + TOTP confirmado, ou reaproveita os existentes trocando a senha.

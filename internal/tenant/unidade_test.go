@@ -32,20 +32,39 @@ func TestLimitadorJanela(t *testing.T) {
 	}
 }
 
-func TestSepararChave(t *testing.T) {
+func TestIdDaChave(t *testing.T) {
 	id, seg := strings.Repeat("A", 26), strings.Repeat("f", 64)
 	casos := map[string]bool{
-		"ck_live_" + id + "_" + seg:       true,
-		"ck_test_" + id + "_" + seg:       false,
-		"ck_live_" + id + seg:             false,
-		"ck_live_" + id + "_" + seg + "0": false,
-		"ck_live_" + id[1:] + "_" + seg:   false,
-		"":                                false,
+		"ck_live_" + id:             true,
+		"ck_test_" + id:             false,
+		"ck_live_" + id + "_" + seg: false, // formato antigo: o segredo não viaja mais no Bearer
+		"ck_live_" + id[1:]:         false,
+		"ck_live_" + id + "0":       false,
+		"":                          false,
 	}
 	for token, quer := range casos {
-		if _, _, ok := separarChave(token); ok != quer {
-			t.Errorf("separarChave(%q) = %v; quer %v", token, ok, quer)
+		if _, ok := idDaChave(token); ok != quer {
+			t.Errorf("idDaChave(%q) = %v; quer %v", token, ok, quer)
 		}
+	}
+}
+
+// Vetor fixo da assinatura: o mesmo que openapi, scripts/consulta-exemplo.sh e o e2e documentam.
+func TestAssinarCobreIdempotencyKey(t *testing.T) {
+	// printf '%s' '1700000000.pedido-1.{"a":1}' | openssl dgst -sha256 -hmac segredo
+	const quer = "978ceb5cda878cb0610bead92cb859f485f02688364eb6f30b182abdbe92906a"
+	a := Assinar("segredo", "1700000000", "pedido-1", []byte(`{"a":1}`))
+	if a != quer {
+		t.Fatalf("Assinar = %s; quer %s", a, quer)
+	}
+	if a == Assinar("segredo", "1700000000", "pedido-2", []byte(`{"a":1}`)) {
+		t.Fatal("trocar a Idempotency-Key precisa mudar a assinatura")
+	}
+	if a == Assinar("segredo", "1700000000", "", []byte(`{"a":1}`)) {
+		t.Fatal("tirar a Idempotency-Key precisa mudar a assinatura")
+	}
+	if a != Assinar("segredo", "1700000000", "pedido-1", []byte(`{"a":1}`)) {
+		t.Fatal("assinatura precisa ser determinística")
 	}
 }
 
@@ -68,9 +87,9 @@ func TestComparacaoDeSegredoEmTempoConstante(t *testing.T) {
 		}
 		usosSeguros += strings.Count(string(fonte), "hmac.Equal(") + strings.Count(string(fonte), "subtle.ConstantTimeCompare(")
 	}
-	// assinatura, hash do segredo, hash da idempotência (ler e guardar)
-	if usosSeguros < 4 {
-		t.Errorf("esperava ≥ 4 comparações em tempo constante, achei %d", usosSeguros)
+	// assinatura, hash da idempotência (ler e guardar)
+	if usosSeguros < 3 {
+		t.Errorf("esperava ≥ 3 comparações em tempo constante, achei %d", usosSeguros)
 	}
 }
 

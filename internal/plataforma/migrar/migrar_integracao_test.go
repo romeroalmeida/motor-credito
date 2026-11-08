@@ -22,7 +22,7 @@ func TestSchema(t *testing.T) {
 	_, err := b.Dono.Exec(ctx, `
 		INSERT INTO tenants (id, nome) VALUES ('ten_a', 'A'), ('ten_b', 'B');
 		INSERT INTO usuarios (id, email, senha_hash) VALUES ('usr_a', 'a@x', 'h');
-		INSERT INTO chaves_api (id, tenant_id, segredo_hash) VALUES ('k_b', 'ten_b', decode(repeat('ab', 32), 'hex'));
+		INSERT INTO chaves_api (id, tenant_id, segredo_cifrado) VALUES ('k_b', 'ten_b', decode(repeat('ab', 32), 'hex'));
 		INSERT INTO consultas (id, tenant_id, finalidade, base_legal, entrada, status, decisao) VALUES
 			('cons_a', 'ten_a', 'concessao_credito', 'x', '{}', 'aprovado', '{}'),
 			('cons_b', 'ten_b', 'concessao_credito', 'x', '{}', 'negado', '{}');

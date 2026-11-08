@@ -7,7 +7,7 @@ info:
 
     Convenções:
     - Dinheiro sempre em **centavos** (inteiro). Taxa em **pontos-base** ao mês (290 = 2,90% a.m.).
-    - IDs com prefixo: `cons_`, `pol_`, `usr_`, `cvt_`, `ten_` + ULID. Chave de API: `ck_live_<id>_<segredo>`.
+    - IDs com prefixo: `cons_`, `pol_`, `usr_`, `cvt_`, `ten_` + ULID. Chave de API: id público `ck_live_<id>` + segredo (só assina, nunca viaja).
     - Datas em RFC 3339 (UTC). Datas sem hora em `AAAA-MM-DD`.
     - Erros sempre no formato `Erro`. Na autenticação a API nunca diz qual parte falhou.
 
@@ -55,8 +55,19 @@ paths:
         Síncrona. Bureau indisponível vira decisão `negado` com motivo `BUREAU_INDISPONIVEL`, nunca erro.
         Documento com dígito inválido ou de pessoa falecida vira `documento_invalido` (200).
 
-        Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + corpo bruto)).
-        `X-Timestamp` em segundos Unix; fora de ±5 min é recusado.
+        Autenticação: `Authorization: Bearer ck_live_<id>` (só o id; o segredo **nunca** vai em cabeçalho).
+
+        Assinatura: `X-Assinatura` = hex(HMAC-SHA256(segredo, X-Timestamp + "." + Idempotency-Key + "." + corpo bruto)).
+        Sem `Idempotency-Key`, o trecho do meio fica vazio (`timestamp + ".." + corpo`). `X-Timestamp` em segundos
+        Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
+        trocando a chave de idempotência.
+
+        Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
+
+        ```sh
+        printf '%s' '1700000000.pedido-1.{"a":1}' | openssl dgst -sha256 -hmac segredo
+        # 978ceb5cda878cb0610bead92cb859f485f02688364eb6f30b182abdbe92906a
+        ```
       security:
         - chaveApi: []
       parameters:
@@ -683,7 +694,7 @@ components:
     chaveApi:
       type: http
       scheme: bearer
-      description: "Authorization: Bearer ck_live_<id>_<segredo> (mais X-Timestamp e X-Assinatura)"
+      description: "Authorization: Bearer ck_live_<id> (só o id; mais X-Timestamp e X-Assinatura feita com o segredo)"
     sessao:
       type: apiKey
       in: cookie
@@ -1090,17 +1101,21 @@ components:
       properties:
         id: { type: string }
         nome: { type: string }
-        prefixo: { type: string, description: '"ck_live_<id>_…" (sem o segredo)' }
+        prefixo: { type: string, description: '"ck_live_<id>": o id público que vai no Bearer (não é segredo)' }
         criada_em: { type: string, format: date-time }
         revogada_em: { type: [string, "null"], format: date-time }
         ultimo_uso_em: { type: [string, "null"], format: date-time }
 
     ChaveCriada:
       type: object
-      required: [id, segredo]
+      required: [id, chave, segredo]
       properties:
         id: { type: string }
-        segredo: { type: string, description: 'Completo: "ck_live_<id>_<segredo>". Mostrado uma única vez.' }
+        chave: { type: string, description: '"ck_live_<id>": vai no cabeçalho Authorization: Bearer' }
+        segredo:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Chave do HMAC de X-Assinatura. Mostrado uma única vez; o servidor guarda cifrado.
 
     IPsPermitidos:
       type: object

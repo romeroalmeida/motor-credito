@@ -5,3 +5,20 @@
 -- O segredo TOTP passou a ser cifrado com subchave própria e AAD = usuario_id; o formato antigo não decifra mais.
 -- Quem tinha TOTP precisa de um novo (a semente recria o do admin demo).
 DELETE FROM totp;
+
+-- ---------------------------------------------------------------- achado 2: o segredo da chave de API assina
+-- O Bearer leva só "ck_live_<id>"; o segredo é a chave do HMAC e o servidor precisa dele: fica cifrado (AES-GCM,
+-- subchave própria, AAD = id da chave). O hash antigo não serve para isso: as chaves existentes são revogadas.
+DROP FUNCTION auth_chave_api(text);
+ALTER TABLE chaves_api ADD COLUMN segredo_cifrado bytea;
+UPDATE chaves_api SET revogada_em = coalesce(revogada_em, now());
+ALTER TABLE chaves_api DROP COLUMN segredo_hash;
+ALTER TABLE chaves_api ADD CONSTRAINT chaves_api_segredo CHECK (segredo_cifrado IS NOT NULL OR revogada_em IS NOT NULL);
+
+CREATE FUNCTION auth_chave_api(p_id text)
+RETURNS TABLE (tenant_id text, segredo_cifrado bytea, revogada_em timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+    SELECT c.tenant_id, c.segredo_cifrado, c.revogada_em FROM public.chaves_api c WHERE c.id = p_id
+$$;
+REVOKE ALL ON FUNCTION auth_chave_api(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION auth_chave_api(text) TO motor_app;

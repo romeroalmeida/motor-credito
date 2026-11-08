@@ -4,7 +4,6 @@ package tenant
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oklog/ulid/v2"
+
+	"github.com/romeroalmeida/motor-credito/internal/plataforma"
 )
 
 // MaxIPsPermitidos é o limite da lista de IPs do tenant (contrato OpenAPI).
@@ -43,22 +44,26 @@ type Chave struct {
 	UltimoUsoEm *time.Time
 }
 
-// Prefixo é a forma exibível da chave: "ck_live_<id>_…" (sem o segredo).
-func (c Chave) Prefixo() string { return prefixoChave + c.ID + "_…" }
+// Prefixo é o identificador público da chave, "ck_live_<id>": vai no Bearer e não é segredo.
+func (c Chave) Prefixo() string { return prefixoChave + c.ID }
 
-// ChaveCriada traz o segredo completo "ck_live_<id>_<segredo>"; ele aparece só aqui.
-type ChaveCriada struct{ ID, Segredo string }
+// ChaveCriada traz o identificador público (Chave = "ck_live_<id>", vai no Bearer) e o segredo (hex, chave do HMAC).
+// O segredo aparece só aqui; o banco guarda ele cifrado.
+type ChaveCriada struct{ ID, Chave, Segredo string }
 
 // Servico acessa o Postgres sempre com app.tenant_id definido (RLS) e filtro explícito de tenant.
 type Servico struct {
-	pool      *pgxpool.Pool
-	agora     func() time.Time
-	limitador *Limitador
+	pool         *pgxpool.Pool
+	agora        func() time.Time
+	limitador    *Limitador
+	chaveSegredo []byte // subchave AES-256 que cifra os segredos das chaves de API
 }
 
-// NovoServico recebe o pool do usuário da aplicação (membro de motor_app).
-func NovoServico(pool *pgxpool.Pool) *Servico {
-	return &Servico{pool: pool, agora: time.Now, limitador: NovoLimitador()}
+// NovoServico recebe o pool do usuário da aplicação (membro de motor_app) e a chave mestra (CHAVE_CIFRA_DOC),
+// da qual deriva a subchave que cifra os segredos das chaves de API.
+func NovoServico(pool *pgxpool.Pool, chaveMestra []byte) *Servico {
+	return &Servico{pool: pool, agora: time.Now, limitador: NovoLimitador(),
+		chaveSegredo: plataforma.DerivarChave(chaveMestra, "chave-api")}
 }
 
 // EmTenant roda fn numa transação com SET LOCAL app.tenant_id, que liga a RLS para esse tenant.
@@ -95,12 +100,12 @@ func (s *Servico) CriarChave(ctx context.Context, tenantID string) (ChaveCriada,
 	return s.CriarChaveComNome(ctx, tenantID, "")
 }
 
-// CriarChaveComNome gera id e segredo; o banco guarda só o SHA-256 do segredo.
+// CriarChaveComNome gera id e segredo; o banco guarda o segredo cifrado (AES-GCM, AAD = id da chave).
 func (s *Servico) CriarChaveComNome(ctx context.Context, tenantID, nome string) (ChaveCriada, error) {
 	var criada ChaveCriada
 	err := EmTenant(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		var err error
-		criada, err = inserirChave(ctx, tx, tenantID, nome)
+		criada, err = s.inserirChave(ctx, tx, tenantID, nome)
 		return err
 	})
 	if err != nil {
@@ -109,19 +114,22 @@ func (s *Servico) CriarChaveComNome(ctx context.Context, tenantID, nome string) 
 	return criada, nil
 }
 
-func inserirChave(ctx context.Context, tx pgx.Tx, tenantID, nome string) (ChaveCriada, error) {
+func (s *Servico) inserirChave(ctx context.Context, tx pgx.Tx, tenantID, nome string) (ChaveCriada, error) {
 	id := ulid.Make().String()
 	bruto := make([]byte, 32)
 	if _, err := rand.Read(bruto); err != nil {
 		return ChaveCriada{}, fmt.Errorf("gerar segredo: %w", err)
 	}
 	segredo := hex.EncodeToString(bruto)
-	hash := sha256.Sum256([]byte(segredo))
-	if _, err := tx.Exec(ctx, `INSERT INTO chaves_api (id, tenant_id, segredo_hash, nome) VALUES ($1, $2, $3, $4)`,
-		id, tenantID, hash[:], nome); err != nil {
+	cifrado, err := plataforma.CifrarAAD(s.chaveSegredo, []byte(segredo), []byte(id))
+	if err != nil {
 		return ChaveCriada{}, err
 	}
-	return ChaveCriada{ID: id, Segredo: prefixoChave + id + "_" + segredo}, nil
+	if _, err := tx.Exec(ctx, `INSERT INTO chaves_api (id, tenant_id, segredo_cifrado, nome) VALUES ($1, $2, $3, $4)`,
+		id, tenantID, cifrado, nome); err != nil {
+		return ChaveCriada{}, err
+	}
+	return ChaveCriada{ID: id, Chave: prefixoChave + id, Segredo: segredo}, nil
 }
 
 // RevogarChave é idempotente; chave inexistente ou de outro tenant → ErrNaoEncontrado.
@@ -154,7 +162,7 @@ func (s *Servico) GirarChave(ctx context.Context, tenantID, chaveID string) (Cha
 		if err != nil {
 			return err
 		}
-		criada, err = inserirChave(ctx, tx, tenantID, nome)
+		criada, err = s.inserirChave(ctx, tx, tenantID, nome)
 		return err
 	})
 	if err != nil && !errors.Is(err, ErrNaoEncontrado) {

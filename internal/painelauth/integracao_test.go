@@ -37,7 +37,7 @@ type usuarioTeste struct{ id, email, segredo string }
 // Um container só para o pacote: os casos rodam como subtestes.
 func TestIntegracao(t *testing.T) {
 	a := &ambiente{t: t, b: bancoteste.Novo(t), relogio: time.Now()}
-	h := Novo(a.b.App, tenant.NovoServico(a.b.App), Opcoes{ChaveCifra: chaveCifraTeste, URLPainel: "https://painel.teste"})
+	h := Novo(a.b.App, tenant.NovoServico(a.b.App, chaveCifraTeste), Opcoes{ChaveCifra: chaveCifraTeste, URLPainel: "https://painel.teste"})
 	h.agora = func() time.Time { return a.relogio }
 	r := chi.NewRouter()
 	h.Rotas(r)
@@ -320,11 +320,11 @@ func (a *ambiente) testarChavesEIPs(t *testing.T) {
 	quer(t, w, 201, "")
 	var criada chaveCriadaJSON
 	_ = json.Unmarshal(w.Body.Bytes(), &criada)
-	if !strings.HasPrefix(criada.Segredo, "ck_live_"+criada.ID+"_") {
-		t.Fatalf("segredo = %q", criada.Segredo)
+	if criada.Chave != "ck_live_"+criada.ID || len(criada.Segredo) != 64 {
+		t.Fatalf("chave criada = %+v", criada)
 	}
 	lista := c.fazer("GET", "/painel/chaves", "", false).Body.String()
-	if strings.Contains(lista, criada.Segredo) || !strings.Contains(lista, `"prefixo":"ck_live_`+criada.ID+`_…"`) {
+	if strings.Contains(lista, criada.Segredo) || !strings.Contains(lista, `"prefixo":"ck_live_`+criada.ID+`"`) {
 		t.Fatalf("lista expõe segredo ou sem prefixo: %s", lista)
 	}
 	quer(t, c.fazer("POST", "/painel/chaves", `{"nome":"`+strings.Repeat("n", maxNomeChave+1)+`"}`, true), 400, "corpo_invalido")

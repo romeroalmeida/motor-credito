@@ -58,11 +58,11 @@ func TestSemearPermiteEntrar(t *testing.T) {
 	if err != nil || pub.Versao != 1 {
 		t.Fatalf("política publicada: %+v %v", pub, err)
 	}
-	if !strings.HasPrefix(d.chaveAPI, "ck_live_") {
+	if !strings.HasPrefix(d.chaveAPI, "ck_live_") || len(d.segredoAPI) != 64 {
 		t.Fatalf("chave = %q", d.chaveAPI)
 	}
 
-	tenants := tenant.NovoServico(b.App)
+	tenants := tenant.NovoServico(b.App, chaveCifra)
 	r := chi.NewRouter()
 	painelauth.Novo(b.App, tenants, painelauth.Opcoes{ChaveCifra: chaveCifra, CookieInseguro: true}).Rotas(r)
 

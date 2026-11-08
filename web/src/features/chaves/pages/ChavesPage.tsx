@@ -7,7 +7,6 @@ import {
   Carregando,
   Cartao,
   ConfirmarAcao,
-  DialogoSegredo,
   ErroCarregar,
   Etiqueta,
   TituloCartao,
@@ -17,14 +16,12 @@ import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { lerErroApi } from '@/shared/utils/erroApi'
 import { formatarDataHora } from '@/shared/utils/formato'
+import { DialogoChaveCriada } from '../components/DialogoChaveCriada'
 import { IpsPermitidos } from '../components/IpsPermitidos'
 import { useChaves, useCriarChave, useGirarChave, useRevogarChave } from '../hooks/useChaves'
-import type { Chave } from '../services/chavesService'
+import type { Chave, ChaveCriada } from '../services/chavesService'
 
 type Acao = { tipo: 'girar' | 'revogar'; chave: Chave }
-
-const AVISO_SEGREDO =
-  'Copie e guarde num cofre de segredos agora. Não mostramos de novo: se perder, gire a chave para gerar outra.'
 
 export function ChavesPage() {
   const chaves = useChaves()
@@ -32,15 +29,11 @@ export function ChavesPage() {
   const girar = useGirarChave()
   const revogar = useRevogarChave()
   const [nome, setNome] = useState('')
-  const [segredo, setSegredo] = useState<string | null>(null)
+  const [criada, setCriada] = useState<ChaveCriada | null>(null)
   const [acao, setAcao] = useState<Acao | null>(null)
 
-  function mostrarSegredo({ segredo: valor }: { segredo: string }) {
-    setSegredo(valor)
-  }
-
   function esquecerSegredo() {
-    setSegredo(null)
+    setCriada(null)
     criar.reset()
     girar.reset()
   }
@@ -48,9 +41,9 @@ export function ChavesPage() {
   function criarChave(evento: FormEvent) {
     evento.preventDefault()
     criar.mutate(nome.trim(), {
-      onSuccess: (criada) => {
+      onSuccess: (nova) => {
         setNome('')
-        mostrarSegredo(criada)
+        setCriada(nova)
       },
     })
   }
@@ -62,9 +55,9 @@ export function ChavesPage() {
       return
     }
     girar.mutate(acao.chave.id, {
-      onSuccess: (criada) => {
+      onSuccess: (nova) => {
         setAcao(null)
-        mostrarSegredo(criada)
+        setCriada(nova)
       },
     })
   }
@@ -75,7 +68,7 @@ export function ChavesPage() {
     <>
       <CabecalhoPagina
         titulo="Chaves de API"
-        descricao="Cada chave assina as chamadas a POST /v1/consultas. O segredo aparece uma única vez, na criação."
+        descricao="Cada chave tem um id (vai no Bearer) e um segredo (assina as chamadas a POST /v1/consultas). O segredo aparece uma única vez, na criação."
       />
       <Cartao aria-labelledby="titulo-chaves">
         <TituloCartao id="titulo-chaves">Chaves</TituloCartao>
@@ -119,14 +112,7 @@ export function ChavesPage() {
 
       <IpsPermitidos />
 
-      <DialogoSegredo
-        aberto={segredo !== null}
-        aoFechar={esquecerSegredo}
-        titulo="Sua nova chave"
-        rotulo="Segredo da chave"
-        valor={segredo ?? ''}
-        aviso={AVISO_SEGREDO}
-      />
+      <DialogoChaveCriada chave={criada} aoFechar={esquecerSegredo} />
 
       <ConfirmarAcao
         aberto={acao !== null}

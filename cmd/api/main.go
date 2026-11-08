@@ -51,7 +51,7 @@ func rodar() error {
 	}
 	defer pool.Close()
 
-	tenants := tenant.NovoServico(pool)
+	tenants := tenant.NovoServico(pool, cfg.ChaveCifraDoc)
 	auth := painelauth.Novo(pool, tenants, painelauth.Opcoes{
 		ChaveCifra:     cfg.ChaveCifraDoc,
 		CookieInseguro: painelauth.CookieInseguroPermitido(os.Getenv("COOKIE_INSEGURO_DEV"), cfg.Ambiente),

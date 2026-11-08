@@ -4,7 +4,7 @@ import { renderizarPagina } from '@/tests/renderizar'
 import { ChavesPage } from './ChavesPage'
 
 describe('chaves de API', () => {
-  it('o segredo aparece uma vez só: some ao fechar e não volta na lista', async () => {
+  it('id e segredo aparecem uma vez só: o segredo some ao fechar e não volta na lista', async () => {
     const usuario = userEvent.setup()
     renderizarPagina(<ChavesPage />)
     await screen.findByText('produção')
@@ -13,11 +13,15 @@ describe('chaves de API', () => {
     await usuario.click(screen.getByRole('button', { name: 'Criar chave' }))
 
     const dialogo = await screen.findByRole('alertdialog', { name: 'Sua nova chave' })
-    const segredo = within(dialogo).getByTestId('segredo').textContent ?? ''
-    expect(segredo).toMatch(/^ck_live_/)
+    const [id, segredoEl] = within(dialogo).getAllByTestId('segredo')
+    const segredo = segredoEl?.textContent ?? ''
+    expect(id).toHaveTextContent(/^ck_live_[0-9A-Z]{26}$/)
+    expect(segredo).toMatch(/^[0-9a-f]{64}$/)
+    expect(within(dialogo).getByText(/Authorization: Bearer/)).toBeInTheDocument()
+    expect(within(dialogo).getByText(/nunca vai em cabeçalho/)).toBeInTheDocument()
     expect(within(dialogo).getByText(/Não mostramos de novo/)).toBeInTheDocument()
 
-    await usuario.click(within(dialogo).getByRole('button', { name: 'Copiar' }))
+    await usuario.click(within(dialogo).getAllByRole('button', { name: 'Copiar' })[1] as HTMLElement)
     expect(await navigator.clipboard.readText()).toBe(segredo)
     expect(within(dialogo).getByRole('button', { name: 'Copiado' })).toBeInTheDocument()
 
@@ -51,6 +55,8 @@ describe('chaves de API', () => {
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Girar chave' }),
     )
     const dialogo = await screen.findByRole('alertdialog', { name: 'Sua nova chave' })
-    expect(within(dialogo).getByTestId('segredo')).toHaveTextContent(/^ck_live_/)
+    const [id, segredo] = within(dialogo).getAllByTestId('segredo')
+    expect(id).toHaveTextContent(/^ck_live_/)
+    expect(segredo).toHaveTextContent(/^[0-9a-f]{64}$/)
   })
 })

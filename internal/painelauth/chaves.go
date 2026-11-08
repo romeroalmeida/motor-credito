@@ -23,8 +23,10 @@ type chaveJSON struct {
 	UltimoUsoEm *time.Time `json:"ultimo_uso_em"`
 }
 
+// chaveCriadaJSON: chave = "ck_live_<id>" (vai no Bearer); segredo = chave do HMAC, mostrado uma vez só.
 type chaveCriadaJSON struct {
 	ID      string `json:"id"`
+	Chave   string `json:"chave"`
 	Segredo string `json:"segredo"`
 }
 
