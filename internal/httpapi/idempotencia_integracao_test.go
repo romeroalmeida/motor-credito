@@ -41,7 +41,7 @@ func (b *bureauContado) Consultar(ctx context.Context, doc string) (bureau.Resul
 func TestIdempotenciaConcorrente(t *testing.T) {
 	a := novoAmbiente(t)
 	cont := &bureauContado{Bureau: bureau.NovoSimulado(0)}
-	tenants := tenant.NovoServico(a.banco.App)
+	tenants := tenant.NovoServico(a.banco.App, chaveCifra)
 	a.h = httpapi.Novo(httpapi.Deps{
 		Pool: a.banco.App, Tenants: tenants,
 		Auth:      painelauth.Novo(a.banco.App, tenants, painelauth.Opcoes{ChaveCifra: chaveCifra, CookieInseguro: true}),
