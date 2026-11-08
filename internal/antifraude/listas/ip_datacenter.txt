@@ -1,0 +1,17 @@
+# shortcut: amostra de faixas de nuvem (AWS, GCP, Azure, Cloudflare, DigitalOcean, OVH);
+# trocar pelas listas publicadas pelos provedores (ip-ranges.json etc.), atualizadas diariamente.
+3.0.0.0/9
+18.128.0.0/9
+52.0.0.0/10
+54.0.0.0/8
+34.64.0.0/10
+35.184.0.0/13
+13.64.0.0/11
+20.0.0.0/11
+104.16.0.0/13
+172.64.0.0/13
+143.198.0.0/16
+164.90.0.0/16
+51.68.0.0/16
+2600:1f00::/24
+2606:4700::/32
