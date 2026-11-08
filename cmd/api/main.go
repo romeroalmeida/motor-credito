@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
+	"github.com/romeroalmeida/motor-credito/internal/bureau/brasilapi"
 	"github.com/romeroalmeida/motor-credito/internal/consulta"
 	"github.com/romeroalmeida/motor-credito/internal/httpapi"
 	"github.com/romeroalmeida/motor-credito/internal/painelauth"
@@ -45,6 +47,10 @@ func rodar() error {
 	if err := migrarBanco(ctx, cfg.DatabaseURLMigracao); err != nil {
 		return err
 	}
+	fonte, err := montarBureau(os.Getenv("BUREAU_CNPJ"))
+	if err != nil {
+		return err
+	}
 	pool, err := plataforma.NovoPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -64,7 +70,7 @@ func rodar() error {
 		Addr: ":" + cfg.Porta,
 		Handler: httpapi.Novo(httpapi.Deps{
 			Pool: pool, Tenants: tenants, Auth: auth, ProxiesConfiaveis: cfg.ProxiesConfiaveis,
-			Consultas: consulta.Novo(pool, bureau.NovoSimulado(atrasoBureau), cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
+			Consultas: consulta.Novo(pool, fonte, cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -88,6 +94,19 @@ func rodar() error {
 		return fmt.Errorf("desligar: %w", err)
 	}
 	return nil
+}
+
+// montarBureau lê BUREAU_CNPJ: vazio ou "simulado" = só o simulado; "brasilapi" = cadastro real de CNPJ na
+// BrasilAPI e o resto do simulado. Valor desconhecido impede subir (um erro de digitação não troca a fonte calado).
+func montarBureau(cnpj string) (bureau.Bureau, error) {
+	simulado := bureau.NovoSimulado(atrasoBureau)
+	switch strings.TrimSpace(cnpj) {
+	case "", "simulado":
+		return simulado, nil
+	case "brasilapi":
+		return bureau.NovoComposto(brasilapi.Novo(""), simulado), nil
+	}
+	return nil, fmt.Errorf("BUREAU_CNPJ=%q desconhecido (use simulado ou brasilapi)", cnpj)
 }
 
 // migrarBanco usa o dono das tabelas só para migrar e fecha a conexão; vazio = não migra.

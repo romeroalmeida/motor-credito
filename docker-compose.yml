@@ -35,6 +35,8 @@ services:
       CHAVE_CIFRA_DOC: ${CHAVE_CIFRA_DOC:?defina CHAVE_CIFRA_DOC no .env}
       COOKIE_INSEGURO_DEV: ${COOKIE_INSEGURO_DEV:-}
       SEED_DEMO: ${SEED_DEMO:-}
+      # Demonstração com cadastro real de CNPJ (BrasilAPI); CPF e score seguem no simulado. simulado = sem rede.
+      BUREAU_CNPJ: ${BUREAU_CNPJ:-brasilapi}
       # Só o nginx (IP fixo abaixo) pode informar o IP do cliente por X-Forwarded-For. Quem chama a 58080
       # direto chega pelo gateway da rede, que não está na lista: o cabeçalho é ignorado.
       PROXIES_CONFIAVEIS: 10.213.47.10/32
