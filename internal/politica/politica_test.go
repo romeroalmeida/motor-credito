@@ -425,6 +425,18 @@ func TestLimiteFixoNoTeto(t *testing.T) {
 	}
 }
 
+// Parcela da contraproposta que estoura int64 é erro, nunca oferta. Compilar não deixa chegar aqui (limite ≤
+// ValorMaximo e taxa ≤ 2×TaxaMaximaBps cabem, ver TestTaxaNoTeto); o limite é forçado depois de compilar.
+func TestContrapropostaComParcelaEstourada(t *testing.T) {
+	c := compilar(t, Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: 290, LimiteFixo: dinheiro.ValorMaximo}},
+		Contraproposta: Contraproposta{Ativa: true}})
+	c.politica.Faixas[0].LimiteFixo = 9_000_000_000_000_000_000 // 9e18 a 2,9% em 1x: parcela > MaxInt64
+	d, err := c.Avaliar(Contexto{PedidoValor: math.MaxInt64, PedidoPrazo: 1})
+	if !errors.Is(err, dinheiro.ErrEstouro) || d.Status != "" || d.Oferta != nil {
+		t.Fatalf("contraproposta estourada = %+v, %v; quer erro de estouro e decisão vazia", d, err)
+	}
+}
+
 // Achado 2: taxa e acréscimo no teto exato compilam, e a contraproposta soma sem estourar.
 func TestTaxaNoTeto(t *testing.T) {
 	p := Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: TaxaMaximaBps, LimiteFixo: dinheiro.ValorMaximo}},
