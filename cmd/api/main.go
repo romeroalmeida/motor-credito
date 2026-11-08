@@ -50,6 +50,9 @@ func rodar() error {
 		return err
 	}
 	defer pool.Close()
+	if err := conferirPapelDaApp(ctx, pool); err != nil {
+		return err
+	}
 
 	tenants := tenant.NovoServico(pool, cfg.ChaveCifraDoc)
 	auth := painelauth.Novo(pool, tenants, painelauth.Opcoes{
