@@ -2,6 +2,7 @@ package repositorio_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestAplicarRetencao(t *testing.T) {
 	const dias = 30
 	corte := agora.AddDate(0, 0, -dias)
 
-	exec(`INSERT INTO tenants (id, nome) VALUES ('ten_a', 'A'), ('ten_b', 'B')`)
+	exec(`INSERT INTO tenants (id, nome) VALUES ('ten_a', 'A'), ('ten_b', 'B'), ('ten_c', 'C')`)
 	inserir := func(id, tenantID string, criado time.Time) {
 		exec(`INSERT INTO consultas (id, tenant_id, doc_hash, doc_cifrado, doc_tipo, finalidade, base_legal, entrada,
 				status, score, faixa_risco, decisao, idempotency_key, idempotency_hash, criado_em)
@@ -35,6 +36,13 @@ func TestAplicarRetencao(t *testing.T) {
 	inserir("cons_borda_a", "ten_a", corte)                        // exatamente no corte: ainda dentro do prazo
 	inserir("cons_nova_b", "ten_b", agora.Add(-time.Hour))
 	exec(`INSERT INTO antifraude_eventos (doc_hash, criado_em) VALUES ('\x01', $1), ('\x01', $2)`, corte.Add(-time.Second), agora)
+
+	// Cache de idempotência: a velha some, a nova e a da borda ficam; ten_c só tem cache vencido (as consultas dele
+	// já teriam sido anonimizadas por uma execução anterior) e ainda assim precisa ser visitado.
+	exec(`INSERT INTO idempotencia (tenant_id, chave, hash_corpo, resposta, criado_em) VALUES
+		('ten_a', 'idem_velha', '\x01', '\x02', $1), ('ten_a', 'idem_borda', '\x01', '\x02', $2),
+		('ten_b', 'idem_nova', '\x01', '\x02', $3), ('ten_c', 'idem_so_cache', '\x01', '\x02', $1)`,
+		corte.Add(-time.Microsecond), corte, agora)
 
 	n, err := repositorio.AplicarRetencao(ctx, b.App, dias, agora)
 	if err != nil || n != 1 {
@@ -74,6 +82,24 @@ func TestAplicarRetencao(t *testing.T) {
 	if err := b.Dono.QueryRow(ctx, `SELECT count(*) FROM antifraude_eventos`).Scan(&eventos); err != nil || eventos != 1 {
 		t.Fatalf("eventos de velocidade = %d, %v; quer só o recente", eventos, err)
 	}
+	var chaves []string
+	linhas, err := b.Dono.Query(ctx, `SELECT chave FROM idempotencia ORDER BY chave`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for linhas.Next() {
+		var c string
+		if err := linhas.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		chaves = append(chaves, c)
+	}
+	if err := linhas.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(chaves, ",") != "idem_borda,idem_nova" {
+		t.Fatalf("idempotencia depois da retenção = %v; quer só idem_borda e idem_nova", chaves)
+	}
 	contarAuditoria := func(tenantID string) int {
 		var c int
 		if err := b.Dono.QueryRow(ctx, `SELECT count(*) FROM auditoria WHERE tenant_id = $1 AND evento = $2 AND ator = $3`,
@@ -82,8 +108,9 @@ func TestAplicarRetencao(t *testing.T) {
 		}
 		return c
 	}
-	if contarAuditoria("ten_a") != 1 || contarAuditoria("ten_b") != 0 {
-		t.Fatalf("auditoria: a=%d b=%d; quer 1 e 0", contarAuditoria("ten_a"), contarAuditoria("ten_b"))
+	if contarAuditoria("ten_a") != 1 || contarAuditoria("ten_b") != 0 || contarAuditoria("ten_c") != 1 {
+		t.Fatalf("auditoria: a=%d b=%d c=%d; quer 1, 0 e 1",
+			contarAuditoria("ten_a"), contarAuditoria("ten_b"), contarAuditoria("ten_c"))
 	}
 	if err := auditoria.Verificar(ctx, b.Dono, "ten_a"); err != nil {
 		t.Fatalf("cadeia da auditoria: %v", err)

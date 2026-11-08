@@ -21,8 +21,9 @@ const AtorRetencao = "sistema:retencao"
 // AplicarRetencao anonimiza as consultas criadas antes de agora − dias, em todos os tenants: apaga o documento
 // (cifrado e HMAC, que permitiria reidentificar pela busca) e a Idempotency-Key (texto livre do cliente) e mantém o
 // agregado (status, score, faixa, valores, política e versão, decisão). Também apaga os eventos de velocidade
-// mais velhos que o corte (têm o HMAC do documento). Idempotente: linha já anonimizada não conta de novo.
-// Cada tenant com linhas apagadas ganha um evento "lgpd.retencao_aplicada" na auditoria, na mesma transação.
+// mais velhos que o corte (têm o HMAC do documento) e, na mesma transação por tenant, as linhas vencidas da tabela
+// idempotencia (chave do cliente, hash do corpo e resposta guardada). Idempotente: linha já anonimizada não conta
+// de novo. O total devolvido conta só as consultas. Cada tenant com linhas apagadas ganha um evento "lgpd.retencao_aplicada" na auditoria, na mesma transação.
 func AplicarRetencao(ctx context.Context, pool *pgxpool.Pool, dias int, agora time.Time) (int64, error) {
 	if dias < 1 {
 		return 0, fmt.Errorf("retenção de %d dias: precisa ser ao menos 1", dias)
@@ -46,12 +47,17 @@ func AplicarRetencao(ctx context.Context, pool *pgxpool.Pool, dias int, agora ti
 				return err
 			}
 			n := tag.RowsAffected()
+			tag, err = tx.Exec(ctx, `DELETE FROM idempotencia WHERE tenant_id = $1 AND criado_em < $2`, t, antes)
+			if err != nil {
+				return err
+			}
+			m := tag.RowsAffected()
 			total += n
-			if n == 0 {
+			if n == 0 && m == 0 {
 				return nil
 			}
 			return auditoria.Registrar(ctx, tx, t, auditoria.EventoRetencaoAplicada, AtorRetencao, nil, map[string]any{
-				"consultas": n, "criadas_antes_de": antes.UTC().Format(time.RFC3339), "retencao_dias": dias,
+				"consultas": n, "idempotencia": m, "criadas_antes_de": antes.UTC().Format(time.RFC3339), "retencao_dias": dias,
 			})
 		})
 		if err != nil {
