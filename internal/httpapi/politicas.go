@@ -69,7 +69,7 @@ func (h handlers) testarPolitica(w http.ResponseWriter, r *http.Request) {
 	repo, _ := h.repo(r)
 	var c struct {
 		Documento string             `json:"documento"`
-		Pedido    consulta.Pedido    `json:"pedido"`
+		Pedido    *consulta.Pedido   `json:"pedido"`
 		Dados     consulta.Dados     `json:"dados"`
 		Politica  *politica.Politica `json:"politica"`
 	}

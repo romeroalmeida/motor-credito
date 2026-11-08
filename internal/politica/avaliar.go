@@ -14,11 +14,11 @@ const (
 	blocoContraoferta = "contraproposta"
 )
 
-// Avaliar aplica a política ao contexto: cortes → faixas → limite → aprovação ou contraproposta.
-// Erro (contexto inválido ou expressão que falhou) não é decisão: quem chama nunca deve aprovar nesse caso.
+// Avaliar aplica a política ao contexto: cortes → faixas → limite → aprovação, contraproposta ou, sem pedido,
+// pré-aprovação. Erro (contexto inválido ou expressão que falhou) não é decisão: quem chama nunca deve aprovar.
 func (c *Compilada) Avaliar(ctx Contexto) (Decisao, error) {
-	if ctx.PedidoValor <= 0 || ctx.PedidoPrazo <= 0 {
-		return Decisao{}, errors.New("pedido com valor e prazo positivos é obrigatório")
+	if !semPedido(ctx) && (ctx.PedidoValor <= 0 || ctx.PedidoPrazo <= 0) {
+		return Decisao{}, errors.New("pedido precisa de valor e prazo positivos (ou nenhum dos dois)")
 	}
 	d := Decisao{Motivos: []Motivo{}, Trilha: []RegraAvaliada{}}
 	vars := variaveis(ctx)
@@ -50,13 +50,23 @@ func (c *Compilada) Avaliar(ctx Contexto) (Decisao, error) {
 	return negar(d, Motivo{Codigo: MotivoSemFaixa, Texto: "Nenhuma faixa de preço atende o perfil"}), nil
 }
 
-// ofertar decide a partir da faixa que casou: nega, aprova o pedido ou faz contraproposta no limite.
-// Parcela que não cabe em int64 é erro (quem chama nega), nunca oferta com valor corrompido.
+func semPedido(ctx Contexto) bool { return ctx.PedidoValor == 0 && ctx.PedidoPrazo == 0 }
+
+// ofertar decide a partir da faixa que casou: nega, aprova o pedido, faz contraproposta no limite ou, sem pedido,
+// pré-aprova. Quem não é negado leva o limite simulado. Parcela que não cabe em int64 é erro (quem chama nega),
+// nunca oferta com valor corrompido.
 func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) (Decisao, error) {
 	if faixa.Nega {
 		return negar(d, Motivo{Codigo: MotivoFaixaNega, Texto: "Perfil na faixa " + faixa.Rotulo + " não é atendido"}), nil
 	}
 	limite := limiteDaFaixa(faixa, ctx.Renda)
+	if semPedido(ctx) {
+		if limite <= 0 {
+			return negar(d, Motivo{Codigo: MotivoSemLimite, Texto: "A renda não comporta limite na faixa " + faixa.Rotulo}), nil
+		}
+		d.Status = PreAprovado
+		return c.comLimite(d, limite, faixa.TaxaBps)
+	}
 	cabe := ctx.PedidoValor <= limite
 	d.Trilha = append(d.Trilha, RegraAvaliada{
 		Bloco: blocoContraoferta, Rotulo: faixa.Rotulo, Expressao: fmt.Sprintf("pedido.valor <= %d", limite), Bateu: cabe,
@@ -67,7 +77,7 @@ func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) (Decisao, erro
 			return Decisao{}, err
 		}
 		d.Status, d.Oferta = Aprovado, oferta
-		return d, nil
+		return c.comLimite(d, limite, faixa.TaxaBps)
 	}
 
 	acimaDoLimite := Motivo{Codigo: MotivoLimiteFaixa, Texto: "Valor pedido acima do limite para o score"}
@@ -85,6 +95,22 @@ func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) (Decisao, erro
 	}
 	d.Status, d.Oferta = Contraproposto, oferta
 	d.Motivos = append(d.Motivos, acimaDoLimite)
+	return c.comLimite(d, limite, faixa.TaxaBps)
+}
+
+// comLimite anexa o limite da faixa simulado em cada prazo ofertado, à taxa da faixa.
+// Uma simulação que estoura é erro da decisão inteira: nada de limite pela metade.
+func (c *Compilada) comLimite(d Decisao, valor int64, taxaBps int) (Decisao, error) {
+	prazos := c.politica.Contraproposta.PrazosOfertados
+	lim := &Limite{ValorMaximo: valor, TaxaBps: taxaBps, Simulacoes: make([]Simulacao, 0, len(prazos))}
+	for _, prazo := range prazos {
+		parcela, err := dinheiro.Parcela(valor, prazo, taxaBps)
+		if err != nil {
+			return Decisao{}, fmt.Errorf("simulação de %d em %dx a %d bps: %w", valor, prazo, taxaBps, err)
+		}
+		lim.Simulacoes = append(lim.Simulacoes, Simulacao{Prazo: prazo, Parcela: parcela})
+	}
+	d.Limite = lim
 	return d, nil
 }
 
@@ -109,7 +135,7 @@ func novaOferta(valor int64, prazo, taxaBps int) (*Oferta, error) {
 
 func negar(d Decisao, m Motivo) Decisao {
 	d.Status = Negado
-	d.Oferta = nil
+	d.Oferta, d.Limite = nil, nil
 	d.Motivos = append(d.Motivos, m)
 	return d
 }

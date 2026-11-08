@@ -24,7 +24,7 @@ const (
 	limiteMaximo = 100
 )
 
-var statusValidos = map[string]bool{"aprovado": true, "negado": true, "contraproposta": true, "documento_invalido": true, "em_analise": true}
+var statusValidos = map[string]bool{"aprovado": true, "negado": true, "contraproposta": true, "pre_aprovado": true, "documento_invalido": true, "em_analise": true}
 
 // criarConsulta: POST /v1/consultas (o MiddlewareAPI já autenticou e devolveu o corpo intacto).
 func (h handlers) criarConsulta(w http.ResponseWriter, r *http.Request) {

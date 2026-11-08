@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,12 +24,15 @@ const (
 	maxTamanhoSinal  = 64   // tamanho máximo de cada sinal assumido pela estimativa de custo
 	maxMultiploRenda = 1000 // 100× a renda
 	// TaxaMaximaBps é o teto de taxa_bps e de acrescimo_taxa_bps (1000% a.m.): a soma nunca estoura int.
-	TaxaMaximaBps    = 100_000
-	recursaoMaxima   = 32
-	identOpcional    = "opcional" // mapa oculto que o has() consulta; o cliente não o referencia
-	campoSinais      = "fraude.sinais"
-	expressaoVerdade = "true"
-	operadorPertence = "in"
+	TaxaMaximaBps  = 100_000
+	recursaoMaxima = 32
+	// PrazoMaximoMeses é o teto de prazo do pedido e dos prazos ofertados.
+	PrazoMaximoMeses   = 420
+	maxPrazosOfertados = 12
+	identOpcional      = "opcional" // mapa oculto que o has() consulta; o cliente não o referencia
+	campoSinais        = "fraude.sinais"
+	expressaoVerdade   = "true"
+	operadorPertence   = "in"
 )
 
 // camposInteiros são as variáveis int do ambiente; renda e idade são opcionais e exigem has().
@@ -66,13 +70,16 @@ func (e *ErroPolitica) Error() string {
 	return "política inválida: " + strings.Join(partes, "; ")
 }
 
+// prazosPadrao são os prazos simulados quando a política não diz quais (políticas anteriores ao campo).
+var prazosPadrao = []int{12, 24, 36}
+
 // regraCompilada é uma condição pronta para avaliar.
 type regraCompilada struct {
 	expressao string
 	programa  cel.Program
 }
 
-// Compilada guarda os programas CEL prontos, na ordem da política.
+// Compilada guarda os programas CEL prontos, na ordem da política, e a política normalizada.
 type Compilada struct {
 	politica Politica
 	cortes   []regraCompilada
@@ -123,6 +130,11 @@ func Compilar(p Politica) (*Compilada, error) {
 	if err := validarContraproposta(p.Contraproposta); err != nil {
 		anotar("contraproposta", err)
 	}
+	prazos, err := normalizarPrazos(p.Contraproposta)
+	if err != nil {
+		anotar("contraproposta.prazos_ofertados", err)
+	}
+	c.politica.Contraproposta.PrazosOfertados = prazos
 	for i, corte := range p.Cortes {
 		regra := fmt.Sprintf("cortes[%d]", i)
 		if corte.Codigo == "" {
@@ -150,6 +162,43 @@ func Compilar(p Politica) (*Compilada, error) {
 		return nil, &ErroPolitica{Problemas: problemas}
 	}
 	return c, nil
+}
+
+// Politica devolve a política como foi compilada: prazos ofertados ordenados (ou o padrão, se vieram vazios).
+func (c *Compilada) Politica() Politica { return c.politica }
+
+// normalizarPrazos valida os prazos ofertados (1 a 12, cada um de 1 ao teto, sem repetir, até o prazo máximo
+// quando há um) e devolve uma cópia ordenada. Vazio vira o padrão, cortado no prazo máximo para não recusar
+// uma versão antiga já publicada; se nada sobrar, oferta o próprio prazo máximo.
+func normalizarPrazos(cp Contraproposta) ([]int, error) {
+	if len(cp.PrazosOfertados) == 0 {
+		var saida []int
+		for _, p := range prazosPadrao {
+			if cp.PrazoMaximo <= 0 || p <= cp.PrazoMaximo {
+				saida = append(saida, p)
+			}
+		}
+		if len(saida) == 0 {
+			saida = []int{cp.PrazoMaximo}
+		}
+		return saida, nil
+	}
+	if len(cp.PrazosOfertados) > maxPrazosOfertados {
+		return nil, fmt.Errorf("de 1 a %d prazos ofertados", maxPrazosOfertados)
+	}
+	saida := slices.Clone(cp.PrazosOfertados)
+	slices.Sort(saida)
+	for i, p := range saida {
+		switch {
+		case p < 1 || p > PrazoMaximoMeses:
+			return nil, fmt.Errorf("prazo ofertado %d fora de 1 a %d meses", p, PrazoMaximoMeses)
+		case cp.PrazoMaximo > 0 && p > cp.PrazoMaximo:
+			return nil, fmt.Errorf("prazo ofertado %d acima do prazo máximo %d", p, cp.PrazoMaximo)
+		case i > 0 && saida[i-1] == p:
+			return nil, fmt.Errorf("prazo ofertado %d repetido", p)
+		}
+	}
+	return saida, nil
 }
 
 func validarContraproposta(cp Contraproposta) error {

@@ -70,7 +70,7 @@ func politicaQueFalha() politica.Politica {
 }
 
 func req(doc string, valor int64) Requisicao {
-	return Requisicao{Documento: doc, Finalidade: FinalidadeConcessao, Pedido: Pedido{Valor: valor, Prazo: 12}}
+	return Requisicao{Documento: doc, Finalidade: FinalidadeConcessao, Pedido: &Pedido{Valor: valor, Prazo: 12}}
 }
 
 func TestAvaliarFailClosed(t *testing.T) {
@@ -158,7 +158,7 @@ func TestIdade(t *testing.T) {
 
 func TestValidar(t *testing.T) {
 	renda := int64(-1)
-	r := Requisicao{Documento: "", Finalidade: "outra", Pedido: Pedido{Valor: 0, Prazo: 421},
+	r := Requisicao{Documento: "", Finalidade: "outra", Pedido: &Pedido{Valor: 0, Prazo: 421},
 		Dados: Dados{Nascimento: "07/11/1990", Renda: &renda, Email: "x", IP: "999.1.1.1"}}
 	campos := r.Validar()
 	for _, c := range []string{"documento", "finalidade", "pedido.valor", "pedido.prazo", "dados.nascimento", "dados.renda", "dados.email", "dados.ip"} {
@@ -368,5 +368,43 @@ func TestFontesNaResposta(t *testing.T) {
 		if r := decidir(bureau.NovoSimulado(0), doc); r.Fontes != nil || r.Cadastro != nil || r.ScoreFatores != nil {
 			t.Fatalf("%s: fontes %+v cadastro %+v", doc, r.Fontes, r.Cadastro)
 		}
+	}
+}
+
+// Consulta de limite (sem pedido): pré-aprova com limite só quando o motor decide; qualquer falha nega sem limite.
+func TestConsultaDeLimite(t *testing.T) {
+	modelo := compilar(t, politica.ModeloEmprestimoPF())
+	semPedido := func(doc string) Requisicao {
+		return Requisicao{Documento: doc, Finalidade: FinalidadeConcessao}
+	}
+	casos := []struct {
+		nome      string
+		req       Requisicao
+		status    string
+		comLimite bool
+	}{
+		{"pré-aprovado", semPedido(bureau.CPFScoreAlto), string(politica.PreAprovado), true},
+		{"com pedido: aprovado e limite", req(bureau.CPFScoreAlto, 100_000), "aprovado", true},
+		{"documento inválido", semPedido("123.456.789-00"), StatusDocumentoInvalido, false},
+		{"bureau indisponível", semPedido(bureau.CPFIndisponivel), StatusNegado, false},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := servicoTeste(bureau.NovoSimulado(0), contadorFake{}).avaliar(context.Background(), c.req, fonteFixa(modelo)).reg
+			if r.Status != c.status || (r.Limite != nil) != c.comLimite || r.Oferta != nil && c.req.Pedido == nil {
+				t.Fatalf("status %s limite %+v oferta %+v; quer %s limite=%v", r.Status, r.Limite, r.Oferta, c.status, c.comLimite)
+			}
+			if c.comLimite && len(r.Limite.Simulacoes) != 3 {
+				t.Fatalf("simulações %+v", r.Limite.Simulacoes)
+			}
+		})
+	}
+	if campos := semPedido(bureau.CPFScoreAlto).Validar(); len(campos) != 0 {
+		t.Fatalf("sem pedido recusado: %v", campos)
+	}
+	parcial := semPedido(bureau.CPFScoreAlto)
+	parcial.Pedido = &Pedido{Valor: 100_000}
+	if campos := parcial.Validar(); len(campos) != 1 || campos["pedido.prazo"] == "" {
+		t.Fatalf("pedido parcial: %v", campos)
 	}
 }

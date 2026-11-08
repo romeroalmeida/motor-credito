@@ -208,6 +208,8 @@ func (a *ambiente) testarConsultas(t *testing.T) {
 		})
 	}
 
+	t.Run("consulta de limite (sem pedido)", a.testarConsultaDeLimite)
+
 	t.Run("documento nunca em claro no banco", func(t *testing.T) {
 		r := decodificar[consulta.Resposta](t, a.api(corpoConsulta("000.000.004-34", 1_000_000), "", true), http.StatusOK)
 		var linha string
@@ -288,6 +290,49 @@ func (a *ambiente) testarConsultas(t *testing.T) {
 			t.Fatalf("erro = %v", e)
 		}
 	})
+}
+
+// Sem pedido: 200 pre_aprovado com limite, gravado e visível no painel; pedido parcial é 400 no campo que faltou;
+// a idempotência vale igual (o hash do corpo distingue com e sem pedido).
+func (a *ambiente) testarConsultaDeLimite(t *testing.T) {
+	semPedido := `{"documento":"` + bureau.CPFScoreAlto + `","finalidade":"concessao_credito","dados":{"renda":500000}}`
+	r := decodificar[consulta.Resposta](t, a.api(semPedido, "", true), http.StatusOK)
+	if r.Status != string(politica.PreAprovado) || r.Oferta != nil || r.Pedido != nil || r.Limite == nil ||
+		r.Limite.ValorMaximo != 3_000_000 || r.Limite.TaxaBps != 290 || len(r.Limite.Simulacoes) != 3 {
+		t.Fatalf("pré-aprovação: %+v limite %+v", r, r.Limite)
+	}
+	if st := a.contar(`SELECT count(*) FROM consultas WHERE id = $1 AND status = 'pre_aprovado'`, r.ID); st != 1 {
+		t.Fatal("pre_aprovado não gravado")
+	}
+	if n := a.contar(`SELECT count(*) FROM auditoria WHERE consulta_id = $1 AND dados ->> 'status' = 'pre_aprovado'`, r.ID); n != 1 {
+		t.Fatal("auditoria sem o pre_aprovado")
+	}
+	lista := a.painel(a.sessA, http.MethodGet, "/painel/consultas?status=pre_aprovado", "")
+	if lista.Code != http.StatusOK || !strings.Contains(lista.Body.String(), r.ID) || !strings.Contains(lista.Body.String(), `"pedido":null`) {
+		t.Fatalf("lista do painel: %d %s", lista.Code, lista.Body.String())
+	}
+	d := decodificar[consulta.Detalhe](t, a.painel(a.sessA, http.MethodGet, "/painel/consultas/"+r.ID, ""), http.StatusOK)
+	if d.Status != "pre_aprovado" || d.Limite == nil || d.Limite.Simulacoes[2].Prazo != 36 {
+		t.Fatalf("detalhe: %+v", d)
+	}
+
+	for corpo, campo := range map[string]string{
+		`{"documento":"` + bureau.CPFScoreAlto + `","finalidade":"concessao_credito","pedido":{"valor":100000}}`: "pedido.prazo",
+		`{"documento":"` + bureau.CPFScoreAlto + `","finalidade":"concessao_credito","pedido":{"prazo":12}}`:     "pedido.valor",
+	} {
+		w := a.api(corpo, "", true)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"`+campo+`"`) {
+			t.Fatalf("pedido parcial: %d %s; quer 400 em %s", w.Code, w.Body.String(), campo)
+		}
+	}
+
+	w1, w2 := a.api(semPedido, "limite-1", true), a.api(semPedido, "limite-1", true)
+	if w1.Code != http.StatusOK || w1.Body.String() != w2.Body.String() {
+		t.Fatalf("reenvio sem pedido diferente:\n%s\n%s", w1.Body.String(), w2.Body.String())
+	}
+	if w := a.api(corpoConsulta(bureau.CPFScoreAlto, 100_000), "limite-1", true); w.Code != http.StatusConflict {
+		t.Fatalf("mesma chave com pedido: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func (a *ambiente) testarIdempotencia(t *testing.T) {
@@ -440,7 +485,8 @@ func (a *ambiente) testarVisaoGeral(t *testing.T) {
 	for _, f := range v.DistribuicaoScore {
 		soma += f.Quantidade
 	}
-	if v.Total == 0 || v.PorStatus["aprovado"] == 0 || v.TaxaAprovacaoBps == 0 || len(v.DistribuicaoScore) != 10 || soma == 0 {
+	if v.Total == 0 || v.PorStatus["aprovado"] == 0 || v.TaxaAprovacaoBps == 0 || len(v.DistribuicaoScore) != 10 || soma == 0 ||
+		v.PorStatus["pre_aprovado"] == 0 || v.TaxaPreAprovacao != 10_000 {
 		t.Fatalf("visão geral: %+v", v)
 	}
 	vb := decodificar[repositorio.VisaoGeral](t, a.painel(a.sessB, http.MethodGet, "/painel/visao-geral", ""), http.StatusOK)

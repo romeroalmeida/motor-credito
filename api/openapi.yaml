@@ -64,6 +64,10 @@ paths:
         Unix; fora de ±5 min é recusado. Assinar a `Idempotency-Key` impede repetir uma requisição capturada
         trocando a chave de idempotência.
 
+        Pedido opcional: sem `pedido` a consulta é de limite (pré-aprovação). Quem passa nos cortes e cai numa faixa
+        que aprova recebe `pre_aprovado`, `oferta` null e `limite` (valor máximo, taxa e parcelas nos prazos
+        ofertados pela política). Pedido parcial (só valor ou só prazo) é 400 no campo que faltou.
+
         Exemplo (segredo `segredo`, timestamp `1700000000`, Idempotency-Key `pedido-1`, corpo `{"a":1}`):
 
         ```sh
@@ -546,10 +550,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [documento, pedido]
+              required: [documento]
               properties:
                 documento: { type: string }
-                pedido: { $ref: "#/components/schemas/Pedido" }
+                pedido:
+                  $ref: "#/components/schemas/Pedido"
+                  description: Opcional; ausente = consulta de limite (pre_aprovado)
                 dados: { $ref: "#/components/schemas/DadosOpcionais" }
                 politica:
                   $ref: "#/components/schemas/Politica"
@@ -891,8 +897,8 @@ components:
 
     StatusDecisao:
       type: string
-      enum: [aprovado, negado, contraproposta, documento_invalido, em_analise]
-      description: em_analise é reservado para a v2
+      enum: [aprovado, negado, contraproposta, pre_aprovado, documento_invalido, em_analise]
+      description: pre_aprovado só sai de consulta sem pedido (nunca é aprovação); em_analise é reservado para a v2
 
     Papel:
       type: string
@@ -900,6 +906,7 @@ components:
 
     Pedido:
       type: object
+      description: Opcional na consulta; se vier, valor e prazo são obrigatórios (parcial → 400 no campo que faltou)
       required: [valor, prazo]
       properties:
         valor: { type: integer, format: int64, minimum: 1, maximum: 10000000000000, description: "Centavos (teto 1e13 = R$ 100 bilhões; acima → 400 em pedido.valor)" }
@@ -919,11 +926,13 @@ components:
 
     ConsultaRequisicao:
       type: object
-      required: [documento, finalidade, pedido]
+      required: [documento, finalidade]
       properties:
         documento: { type: string, description: "CPF ou CNPJ (com ou sem máscara; CNPJ alfanumérico aceito)" }
         finalidade: { type: string, enum: [concessao_credito] }
-        pedido: { $ref: "#/components/schemas/Pedido" }
+        pedido:
+          $ref: "#/components/schemas/Pedido"
+          description: Ausente = consulta de limite (pré-aprovação)
         dados: { $ref: "#/components/schemas/DadosOpcionais" }
 
     Oferta:
@@ -935,13 +944,29 @@ components:
         taxa_mensal_bps: { type: integer }
         parcela: { type: integer, format: int64, description: Centavos (Price) }
 
+    Simulacao:
+      type: object
+      required: [prazo, parcela]
+      properties:
+        prazo: { type: integer, description: Meses }
+        parcela: { type: integer, format: int64, description: Centavos (Price, à taxa da faixa) }
+
+    Limite:
+      type: object
+      description: Crédito máximo da faixa e simulações nos prazos ofertados da política
+      required: [valor_maximo, taxa_mensal_bps, simulacoes]
+      properties:
+        valor_maximo: { type: integer, format: int64, description: "Centavos: min(limite fixo, renda × múltiplo); sem renda, o fixo" }
+        taxa_mensal_bps: { type: integer, description: Taxa da faixa }
+        simulacoes: { type: array, items: { $ref: "#/components/schemas/Simulacao" } }
+
     Motivo:
       type: object
       required: [codigo, texto]
       properties:
         codigo:
           type: string
-          examples: [LIMITE_FAIXA, SEM_FAIXA, FAIXA_NEGADA, BUREAU_INDISPONIVEL, DOCUMENTO_INVALIDO, ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL, ERRO_POLITICA]
+          examples: [LIMITE_FAIXA, SEM_FAIXA, FAIXA_NEGADA, SEM_LIMITE, BUREAU_INDISPONIVEL, DOCUMENTO_INVALIDO, ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL, ERRO_POLITICA]
           description: |
             Os de corte vêm da política. Falhas sempre negam: BUREAU_INDISPONIVEL (erro ou > 2s),
             ANTIFRAUDE_INDISPONIVEL, POLITICA_INDISPONIVEL (nenhuma versão publicada), ERRO_POLITICA (avaliação falhou).
@@ -974,7 +999,7 @@ components:
 
     ConsultaResposta:
       type: object
-      required: [id, status, pedido, motivos, criado_em]
+      required: [id, status, pedido, limite, motivos, criado_em]
       properties:
         id: { type: string, examples: [cons_01JC0000000000000000000000] }
         status: { $ref: "#/components/schemas/StatusDecisao" }
@@ -984,7 +1009,16 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Oferta"
             - type: "null"
-        pedido: { $ref: "#/components/schemas/Pedido" }
+        limite:
+          description: Presente quando aprova, contrapropõe ou pré-aprova; null quando nega ou o documento é inválido
+          oneOf:
+            - $ref: "#/components/schemas/Limite"
+            - type: "null"
+        pedido:
+          description: null na consulta de limite
+          oneOf:
+            - $ref: "#/components/schemas/Pedido"
+            - type: "null"
         motivos: { type: array, items: { $ref: "#/components/schemas/Motivo" } }
         antifraude:
           oneOf:
@@ -1114,7 +1148,10 @@ components:
         status: { $ref: "#/components/schemas/StatusDecisao" }
         score: { type: [integer, "null"] }
         faixa_risco: { type: [string, "null"] }
-        pedido: { $ref: "#/components/schemas/Pedido" }
+        pedido:
+          oneOf:
+            - $ref: "#/components/schemas/Pedido"
+            - type: "null"
         oferta:
           oneOf:
             - $ref: "#/components/schemas/Oferta"
@@ -1180,11 +1217,21 @@ components:
 
     Contraproposta:
       type: object
+      description: 'No painel o bloco se chama "Oferta"; o nome no JSON fica por compatibilidade'
       required: [ativa, prazo_maximo, acrescimo_taxa_bps]
       properties:
         ativa: { type: boolean }
         prazo_maximo: { type: integer, minimum: 0, description: 0 = mantém o prazo pedido }
         acrescimo_taxa_bps: { type: integer, minimum: 0, maximum: 100000, description: "Teto 100000; acima → 422, regra contraproposta" }
+        prazos_ofertados:
+          type: array
+          minItems: 0
+          maxItems: 12
+          items: { type: integer, minimum: 1, maximum: 420 }
+          description: |
+            Prazos (meses) das simulações do limite. 1 a 12, sem repetir, até prazo_maximo quando > 0
+            (senão 422 na regra contraproposta.prazos_ofertados); o motor usa ordenado. Vazio ou ausente = [12, 24, 36]
+            (cortado no prazo_maximo), para as versões publicadas antes do campo.
 
     Politica:
       type: object
@@ -1236,7 +1283,7 @@ components:
 
     ResultadoTeste:
       type: object
-      required: [status, motivos, trilha]
+      required: [status, limite, motivos, trilha]
       properties:
         status: { $ref: "#/components/schemas/StatusDecisao" }
         score: { type: [integer, "null"] }
@@ -1244,6 +1291,10 @@ components:
         oferta:
           oneOf:
             - $ref: "#/components/schemas/Oferta"
+            - type: "null"
+        limite:
+          oneOf:
+            - $ref: "#/components/schemas/Limite"
             - type: "null"
         motivos: { type: array, items: { $ref: "#/components/schemas/Motivo" } }
         antifraude:
@@ -1345,7 +1396,7 @@ components:
 
     VisaoGeral:
       type: object
-      required: [periodo, total, por_status, taxa_aprovacao_bps, distribuicao_score, sinais_frequentes]
+      required: [periodo, total, por_status, taxa_aprovacao_bps, taxa_pre_aprovacao_bps, distribuicao_score, sinais_frequentes]
       properties:
         periodo: { type: string, enum: [hoje, "7d", "30d"] }
         total: { type: integer }
@@ -1355,7 +1406,10 @@ components:
           description: StatusDecisao → quantidade
         taxa_aprovacao_bps:
           type: integer
-          description: (aprovado + contraproposta) / total, em pontos-base (6500 = 65%)
+          description: (aprovado + contraproposta) / consultas com pedido, em pontos-base (6500 = 65%). Pré-aprovado não entra
+        taxa_pre_aprovacao_bps:
+          type: integer
+          description: pre_aprovado / consultas sem pedido (de limite), em pontos-base
         distribuicao_score:
           type: array
           items:

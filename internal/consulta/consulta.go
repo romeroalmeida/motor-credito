@@ -123,7 +123,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 	if d.FaixaRisco != "" {
 		av.reg.FaixaRisco = &d.FaixaRisco
 	}
-	av.reg.Oferta, av.reg.Motivos, av.reg.Trilha = d.Oferta, d.Motivos, d.Trilha
+	av.reg.Oferta, av.reg.Limite, av.reg.Motivos, av.reg.Trilha = d.Oferta, d.Limite, d.Motivos, d.Trilha
 	return av
 }
 
@@ -132,8 +132,10 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Resultado) politica.Contexto {
 	c := politica.Contexto{
 		Score: b.Score, Restricoes: b.Restricoes, Protestos: b.Protestos, DividaTotal: b.DividaTotal,
-		Renda: req.Dados.Renda, PedidoValor: req.Pedido.Valor, PedidoPrazo: req.Pedido.Prazo,
-		FraudeRisco: af.Risco, FraudeSinais: af.Sinais,
+		Renda: req.Dados.Renda, FraudeRisco: af.Risco, FraudeSinais: af.Sinais,
+	}
+	if req.Pedido != nil { // sem pedido, valor e prazo ficam zero: o motor entende como consulta de limite
+		c.PedidoValor, c.PedidoPrazo = req.Pedido.Valor, req.Pedido.Prazo
 	}
 	if c.Renda == nil {
 		c.Renda = b.Renda
@@ -175,14 +177,14 @@ func idadeEm(nascimento string, agora time.Time) (int, bool) {
 }
 
 func negar(av avaliacao, codigo, texto string) avaliacao {
-	av.reg.Status, av.reg.Oferta, av.reg.FaixaRisco = StatusNegado, nil, nil
+	av.reg.Status, av.reg.Oferta, av.reg.Limite, av.reg.FaixaRisco = StatusNegado, nil, nil, nil
 	av.reg.Motivos = append(av.reg.Motivos, politica.Motivo{Codigo: codigo, Texto: texto})
 	return av
 }
 
 // documentoInvalido cobre dígito errado e pessoa falecida, sem dizer qual dos dois (desenho §5).
 func documentoInvalido(av avaliacao) avaliacao {
-	av.reg.Status, av.reg.Score, av.reg.Oferta, av.reg.FaixaRisco = StatusDocumentoInvalido, nil, nil, nil
+	av.reg.Status, av.reg.Score, av.reg.Oferta, av.reg.Limite, av.reg.FaixaRisco = StatusDocumentoInvalido, nil, nil, nil, nil
 	av.reg.Motivos = []politica.Motivo{{Codigo: MotivoDocumentoInvalido, Texto: "Documento inválido para concessão de crédito"}}
 	return av
 }
@@ -282,7 +284,7 @@ func (s *Servico) politicaPublicada(repo *repositorio.Repo) fontePolitica {
 func (s *Servico) Simular(ctx context.Context, req Requisicao, c *politica.Compilada) ResultadoTeste {
 	av := s.avaliar(ctx, req, func(context.Context) (*PoliticaRef, *politica.Compilada, error) { return nil, c, nil })
 	r := av.reg
-	return ResultadoTeste{Status: r.Status, Score: r.Score, FaixaRisco: r.FaixaRisco, Oferta: r.Oferta,
+	return ResultadoTeste{Status: r.Status, Score: r.Score, FaixaRisco: r.FaixaRisco, Oferta: r.Oferta, Limite: r.Limite,
 		Motivos: r.Motivos, Antifraude: r.Antifraude, Trilha: r.Trilha,
 		Fontes: r.Fontes, ScoreFatores: r.ScoreFatores, Cadastro: r.Cadastro}
 }

@@ -33,7 +33,6 @@ const (
 )
 
 const (
-	prazoMaximo      = 420
 	maxNome          = 200
 	maxTelefone      = 30
 	maxDispositivo   = 200
@@ -42,7 +41,7 @@ const (
 	maxDocumentoBrut = 40
 )
 
-// Pedido é o crédito pedido: valor em centavos, prazo em meses.
+// Pedido é o crédito pedido: valor em centavos, prazo em meses. Opcional: sem ele a consulta é de limite.
 type Pedido struct {
 	Valor int64 `json:"valor"`
 	Prazo int   `json:"prazo"`
@@ -61,10 +60,10 @@ type Dados struct {
 
 // Requisicao é o corpo de POST /v1/consultas.
 type Requisicao struct {
-	Documento  string `json:"documento"`
-	Finalidade string `json:"finalidade"`
-	Pedido     Pedido `json:"pedido"`
-	Dados      Dados  `json:"dados"`
+	Documento  string  `json:"documento"`
+	Finalidade string  `json:"finalidade"`
+	Pedido     *Pedido `json:"pedido"` // nil = consulta de limite (pré-aprovação)
+	Dados      Dados   `json:"dados"`
 }
 
 // Validar devolve campo → problema (400). Dígito verificador errado NÃO é erro aqui: vira documento_invalido.
@@ -76,7 +75,9 @@ func (r Requisicao) Validar() map[string]string {
 	if r.Finalidade != FinalidadeConcessao {
 		campos["finalidade"] = "deve ser concessao_credito"
 	}
-	validarPedido(r.Pedido, campos)
+	if r.Pedido != nil { // pedido parcial cai aqui: o campo que faltou vem zerado e é recusado
+		validarPedido(*r.Pedido, campos)
+	}
 	d := r.Dados
 	if utf8.RuneCountInString(d.Nome) > maxNome {
 		campos["dados.nome"] = "até 200 caracteres"
@@ -112,7 +113,7 @@ func validarPedido(p Pedido, campos map[string]string) {
 	if p.Valor < 1 || p.Valor > dinheiro.ValorMaximo {
 		campos["pedido.valor"] = "entre 1 e 10000000000000 centavos"
 	}
-	if p.Prazo < 1 || p.Prazo > prazoMaximo {
+	if p.Prazo < 1 || p.Prazo > politica.PrazoMaximoMeses {
 		campos["pedido.prazo"] = "entre 1 e 420 meses"
 	}
 }
@@ -138,7 +139,8 @@ type Resposta struct {
 	Score      *int              `json:"score"`
 	FaixaRisco *string           `json:"faixa_risco"`
 	Oferta     *politica.Oferta  `json:"oferta"`
-	Pedido     Pedido            `json:"pedido"`
+	Limite     *politica.Limite  `json:"limite"` // nil quando negado ou documento inválido
+	Pedido     *Pedido           `json:"pedido"` // nil na consulta de limite
 	Motivos    []politica.Motivo `json:"motivos"`
 	Antifraude *Antifraude       `json:"antifraude"`
 	Politica   *PoliticaRef      `json:"politica"`
@@ -168,6 +170,7 @@ type ResultadoTeste struct {
 	Score        *int                     `json:"score"`
 	FaixaRisco   *string                  `json:"faixa_risco"`
 	Oferta       *politica.Oferta         `json:"oferta"`
+	Limite       *politica.Limite         `json:"limite"`
 	Motivos      []politica.Motivo        `json:"motivos"`
 	Antifraude   *Antifraude              `json:"antifraude"`
 	Trilha       []politica.RegraAvaliada `json:"trilha"`
@@ -184,7 +187,7 @@ type Resumo struct {
 	Status             string           `json:"status"`
 	Score              *int             `json:"score"`
 	FaixaRisco         *string          `json:"faixa_risco"`
-	Pedido             Pedido           `json:"pedido"`
+	Pedido             *Pedido          `json:"pedido"`
 	Oferta             *politica.Oferta `json:"oferta"`
 	AntifraudeRisco    *int             `json:"antifraude_risco"`
 	PoliticaVersao     *int             `json:"politica_versao"`
@@ -204,7 +207,7 @@ type Detalhe struct {
 
 // entrada é o que vai para consultas.entrada: o pedido e QUAIS dados vieram, nunca os valores pessoais.
 type entrada struct {
-	Pedido          Pedido   `json:"pedido"`
+	Pedido          *Pedido  `json:"pedido"`
 	DadosInformados []string `json:"dados_informados"`
 }
 

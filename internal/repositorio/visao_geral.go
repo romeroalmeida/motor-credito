@@ -36,7 +36,8 @@ type VisaoGeral struct {
 	Periodo           string         `json:"periodo"`
 	Total             int            `json:"total"`
 	PorStatus         map[string]int `json:"por_status"`
-	TaxaAprovacaoBps  int            `json:"taxa_aprovacao_bps"`
+	TaxaAprovacaoBps  int            `json:"taxa_aprovacao_bps"`     // (aprovado + contraproposta) / consultas com pedido
+	TaxaPreAprovacao  int            `json:"taxa_pre_aprovacao_bps"` // pre_aprovado / consultas sem pedido (de limite)
 	DistribuicaoScore []FaixaScore   `json:"distribuicao_score"`
 	SinaisFrequentes  []SinalContado `json:"sinais_frequentes"`
 }
@@ -54,6 +55,7 @@ func (r *Repo) VisaoGeral(ctx context.Context, periodo string) (VisaoGeral, erro
 		}
 		v.DistribuicaoScore = append(v.DistribuicaoScore, FaixaScore{De: de, Ate: ate})
 	}
+	var comPedido int
 	err := r.emTx(ctx, func(tx pgx.Tx) error {
 		var desde time.Time
 		if err := tx.QueryRow(ctx, `SELECT CASE $1
@@ -64,6 +66,10 @@ func (r *Repo) VisaoGeral(ctx context.Context, periodo string) (VisaoGeral, erro
 		}
 		if err := contar(ctx, tx, `SELECT status, count(*) FROM consultas WHERE tenant_id = $1 AND criado_em >= $2 GROUP BY status`,
 			r.tenantID, desde, func(status string, n int) { v.PorStatus[status] = n; v.Total += n }); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM consultas WHERE tenant_id = $1 AND criado_em >= $2
+			AND jsonb_typeof(decisao -> 'pedido') = 'object'`, r.tenantID, desde).Scan(&comPedido); err != nil {
 			return err
 		}
 		if err := contar(ctx, tx, `SELECT least(score / 100, 9)::text, count(*) FROM consultas
@@ -83,8 +89,12 @@ func (r *Repo) VisaoGeral(ctx context.Context, periodo string) (VisaoGeral, erro
 	if err != nil {
 		return VisaoGeral{}, fmt.Errorf("visão geral: %w", err)
 	}
-	if v.Total > 0 {
-		v.TaxaAprovacaoBps = (v.PorStatus["aprovado"] + v.PorStatus["contraproposta"]) * 10_000 / v.Total
+	// Pré-aprovação não é aprovação: cada taxa tem o próprio denominador (com pedido × consulta de limite).
+	if comPedido > 0 {
+		v.TaxaAprovacaoBps = (v.PorStatus["aprovado"] + v.PorStatus["contraproposta"]) * 10_000 / comPedido
+	}
+	if semPedido := v.Total - comPedido; semPedido > 0 {
+		v.TaxaPreAprovacao = v.PorStatus["pre_aprovado"] * 10_000 / semPedido
 	}
 	return v, nil
 }
