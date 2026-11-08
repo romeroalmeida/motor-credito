@@ -149,6 +149,14 @@ URL e chave do trial são públicas e entram como padrão só nesse modo. Produ�
 `SERPRO_URL` e `SERPRO_CHAVE` (sem as duas, a API não sobe). Valor desconhecido em `BUREAU_CPF`/`BUREAU_CNPJ`
 também impede subir. Os CPFs de teste do Serpro estão em `internal/bureau/README.md`.
 
+## Simulador de integração
+
+No painel, **Simulador de integração** (só admin) faz uma chamada real da `POST /v1/consultas` com uma chave do
+tenant: o servidor assina com o segredo da chave (que não sai dele) e roda a requisição pelo mesmo router da `/v1`,
+com o IP do usuário do painel (lista de IPs e limite valem). A tela mostra a requisição com a `X-Assinatura` real,
+a resposta e o mesmo pedido em curl, Node e Python, que leem o segredo de `MOTOR_SEGREDO`. Na auditoria fica
+`simulador.consulta` com o usuário que disparou.
+
 ## Limitações (honestas)
 
 - **Restrições, protestos, dívida e renda são simulados.** Determinísticos, derivados do documento. Não existe

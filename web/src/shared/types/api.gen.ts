@@ -1348,6 +1348,67 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/painel/simulador/consultas': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /**
+     * Assina com uma chave do tenant e executa a POST /v1/consultas real. Só admin.
+     * @description O servidor busca a chave no tenant da sessão (outra, revogada ou inexistente → 404), assina com o segredo
+     *     dela (que nunca sai do servidor) e roda a requisição pelo mesmo router e middlewares da `/v1` (assinatura,
+     *     limite por minuto e lista de IPs; o IP de origem é o do usuário do painel). A consulta é gravada como
+     *     qualquer outra (ator `api:<chave_id>`) e a auditoria ganha `simulador.consulta` com o usuário que disparou.
+     *
+     *     Erros da `/v1` (400, 401, 409, 429) voltam **dentro** de `resposta`, com 200 aqui.
+     */
+    post: {
+      parameters: {
+        query?: never
+        header: {
+          /** @description Igual ao cookie csrf */
+          'X-CSRF': components['parameters']['XCSRF']
+        }
+        path?: never
+        cookie?: never
+      }
+      requestBody: {
+        content: {
+          'application/json': {
+            /** @description id da chave (sem o prefixo ck_live_) */
+            chave_id: string
+            /** @description Vazia = o servidor gera um UUID */
+            idempotency_key?: string
+            requisicao: components['schemas']['ConsultaRequisicao']
+          }
+        }
+      }
+      responses: {
+        /** @description Requisição assinada, resposta real da /v1 e trechos de código */
+        200: {
+          headers: {
+            [name: string]: unknown
+          }
+          content: {
+            'application/json': components['schemas']['ResultadoSimulador']
+          }
+        }
+        400: components['responses']['CorpoInvalido']
+        401: components['responses']['NaoAutorizado']
+        403: components['responses']['Proibido']
+        404: components['responses']['NaoEncontrado']
+      }
+    }
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/painel/auditoria': {
     parameters: {
       query?: never
@@ -1684,13 +1745,15 @@ export interface components {
       /**
        * @description consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
        *     equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
-       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu, lgpd.retencao_aplicada (ator sistema:retencao).
+       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu, lgpd.retencao_aplicada (ator sistema:retencao),
+       *     simulador.consulta (ator usuario:<id> que disparou pelo simulador; dados: chave_id, via, status_http).
        *     Os dados nunca levam e-mail, senha ou documento.
        * @example consulta.decidida
        * @example politica.publicada
        * @example chave.criada
        * @example equipe.membro_removido
        * @example auth.falhou
+       * @example simulador.consulta
        */
       evento: string
       /**
@@ -1703,6 +1766,39 @@ export interface components {
       criado_em: string
       /** @description O hash confere com o conteúdo desta linha (a ligação entre linhas é conferida em /integridade) */
       hash_ok: boolean
+    }
+    ResultadoSimulador: {
+      requisicao: {
+        /** @example POST */
+        metodo: string
+        /** @description URL pública da /v1/consultas */
+        url: string
+        /** @description Authorization (Bearer ck_live_<id>), Content-Type, X-Timestamp, Idempotency-Key, X-Assinatura reais */
+        cabecalhos: {
+          [key: string]: string
+        }
+        /** @description Texto exato que foi assinado e enviado */
+        corpo: string
+      }
+      resposta: {
+        /** @description Status HTTP real da /v1 */
+        status: number
+        /** @description Content-Type e Retry-After, quando houver */
+        cabecalhos: {
+          [key: string]: string
+        }
+        /** @description JSON devolvido pela /v1 (ConsultaResposta no 200, Erro nos demais) */
+        corpo: unknown
+        duracao_ms: number
+      }
+      /** @description Presente quando a /v1 devolveu uma decisão */
+      consulta_id: string | null
+      /** @description A mesma requisição em código; leem o segredo de MOTOR_SEGREDO e calculam a assinatura */
+      trechos: {
+        curl: string
+        node: string
+        python: string
+      }
     }
     ConsultaResumo: {
       id: string

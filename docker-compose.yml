@@ -35,6 +35,8 @@ services:
       CHAVE_CIFRA_DOC: ${CHAVE_CIFRA_DOC:?defina CHAVE_CIFRA_DOC no .env}
       COOKIE_INSEGURO_DEV: ${COOKIE_INSEGURO_DEV:-}
       SEED_DEMO: ${SEED_DEMO:-}
+      # Origem pública do painel e da /v1 (o nginx serve as duas): link de convite e URL do simulador.
+      URL_PAINEL: ${URL_PAINEL:-http://localhost:55173}
       # Demonstração com cadastro real de CNPJ (BrasilAPI); CPF e score seguem no simulado. simulado = sem rede.
       BUREAU_CNPJ: ${BUREAU_CNPJ:-brasilapi}
       # CPF: simulado por padrão (a cota do trial do Serpro é mínima). Para ligar: BUREAU_CPF=serpro-trial

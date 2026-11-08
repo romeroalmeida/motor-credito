@@ -29,6 +29,8 @@ type Deps struct {
 	Consultas *consulta.Servico
 	// ProxiesConfiaveis: de quem o X-Forwarded-For vale (PROXIES_CONFIAVEIS). Vazio = de ninguém.
 	ProxiesConfiaveis []netip.Prefix
+	// URLPublica: origem pública da API (URL_PAINEL), mostrada no simulador e nos trechos de código.
+	URLPublica string
 }
 
 type handlers struct{ Deps }
@@ -37,6 +39,7 @@ type handlers struct{ Deps }
 func Novo(d Deps) http.Handler {
 	h := handlers{d}
 	r := chi.NewRouter()
+	raiz := r // os grupos abaixo sombreiam r; o simulador precisa do router inteiro
 	r.Use(middleware.Recoverer, IPReal(d.ProxiesConfiaveis), cabecalhosSeguranca, limitarCorpo)
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { escreverErro(w, http.StatusNotFound, "nao_encontrado") })
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
@@ -73,6 +76,7 @@ func Novo(d Deps) http.Handler {
 			r.Post("/painel/politicas/testar", h.testarPolitica)
 			r.Post("/painel/politicas/publicar", h.publicar)
 			r.Post("/painel/politicas/versoes/{versao}/reverter", h.reverter)
+			r.Post("/painel/simulador/consultas", h.simular(raiz))
 		})
 	})
 	return r

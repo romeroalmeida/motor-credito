@@ -300,6 +300,15 @@ func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
 	if _, err := s.GirarChave(ctx, "ten_b", criada.ID, "teste"); !errors.Is(err, ErrNaoEncontrado) {
 		t.Fatalf("girar chave alheia: err = %v; quer ErrNaoEncontrado", err)
 	}
+	// Simulador do painel: assina com o segredo da chave só no tenant dela.
+	corpo := []byte(`{"a":1}`)
+	if ass, err := s.AssinarComChave(ctx, "ten_a", criada.ID, "1700000000", "idem-1", corpo); err != nil ||
+		ass != Assinar(criada.Segredo, "1700000000", "idem-1", corpo) {
+		t.Fatalf("assinar com a chave do próprio tenant: %q, %v", ass, err)
+	}
+	if ass, err := s.AssinarComChave(ctx, "ten_b", criada.ID, "1700000000", "idem-1", corpo); !errors.Is(err, ErrNaoEncontrado) || ass != "" {
+		t.Fatalf("assinar com chave alheia: %q, %v; quer ErrNaoEncontrado", ass, err)
+	}
 	if lista, _ := s.ListarChaves(ctx, "ten_b"); contem(lista, criada.ID) {
 		t.Fatal("tenant B lista chave do A")
 	}
@@ -323,6 +332,9 @@ func testarChavesIsolamento(t *testing.T, ctx context.Context, s *Servico) {
 	}
 	if err := s.RevogarChave(ctx, "ten_a", nova.ID, "teste"); err != nil {
 		t.Fatalf("revogar de novo deve ser idempotente: %v", err)
+	}
+	if _, err := s.AssinarComChave(ctx, "ten_a", nova.ID, "1700000000", "", corpo); !errors.Is(err, ErrNaoEncontrado) {
+		t.Fatalf("assinar com chave revogada: %v; quer ErrNaoEncontrado", err)
 	}
 }
 

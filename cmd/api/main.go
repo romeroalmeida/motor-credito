@@ -72,7 +72,8 @@ func rodar() error {
 		Addr: ":" + cfg.Porta,
 		Handler: httpapi.Novo(httpapi.Deps{
 			Pool: pool, Tenants: tenants, Auth: auth, ProxiesConfiaveis: cfg.ProxiesConfiaveis,
-			Consultas: consulta.Novo(pool, fonte, cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
+			URLPublica: os.Getenv("URL_PAINEL"),
+			Consultas:  consulta.Novo(pool, fonte, cfg.ChaveHMACDoc, cfg.ChaveCifraDoc),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

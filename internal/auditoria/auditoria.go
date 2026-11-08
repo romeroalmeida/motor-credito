@@ -37,6 +37,8 @@ const (
 	EventoDoisFatoresFalhou = "auth.2fa_falhou" // {ip}
 	EventoSaiu              = "auth.saiu"
 
+	EventoSimuladorConsulta = "simulador.consulta" // {chave_id, via: "simulador", status_http}; ator = usuário do painel
+
 	EventoRetencaoAplicada = "lgpd.retencao_aplicada" // {consultas, criadas_antes_de, retencao_dias}; ator sistema:retencao
 )
 

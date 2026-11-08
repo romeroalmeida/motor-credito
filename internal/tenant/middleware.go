@@ -62,6 +62,27 @@ func Assinar(segredo, timestamp, idempotencyKey string, corpo []byte) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// AssinarComChave assina com o segredo da chave chaveID do tenant (simulador do painel). O segredo é decifrado
+// aqui e não sai do pacote: volta só a assinatura. Chave de outro tenant, revogada ou inexistente → ErrNaoEncontrado.
+func (s *Servico) AssinarComChave(ctx context.Context, tenantID, chaveID, timestamp, idempotencyKey string, corpo []byte) (string, error) {
+	var cifrado []byte
+	err := EmTenant(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT segredo_cifrado FROM chaves_api
+			WHERE id = $1 AND tenant_id = $2 AND revogada_em IS NULL`, chaveID, tenantID).Scan(&cifrado)
+	})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && cifrado == nil) {
+		return "", ErrNaoEncontrado
+	}
+	if err != nil {
+		return "", fmt.Errorf("buscar chave para assinar: %w", err)
+	}
+	segredo, err := plataforma.DecifrarAAD(s.chaveSegredo, cifrado, []byte(chaveID))
+	if err != nil {
+		return "", fmt.Errorf("decifrar segredo da chave %s: %w", chaveID, err)
+	}
+	return Assinar(string(segredo), timestamp, idempotencyKey, corpo), nil
+}
+
 // MiddlewareAPI autentica a API pública: Bearer + X-Timestamp (±5 min) + X-Assinatura + IP permitido + limite
 // por minuto. Qualquer falha de credencial vira 401 {"erro":"nao_autorizado"}, sem dizer qual parte falhou.
 func (s *Servico) MiddlewareAPI(next http.Handler) http.Handler {

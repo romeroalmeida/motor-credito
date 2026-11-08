@@ -27,6 +27,8 @@ tags:
   - name: politica
   - name: visao-geral
   - name: auditoria
+  - name: simulador
+    description: Chamada real da /v1 feita pelo painel com uma chave do tenant (só admin)
   - name: saude
 
 paths:
@@ -678,6 +680,41 @@ paths:
         "404": { $ref: "#/components/responses/NaoEncontrado" }
 
   # ------------------------------------------------------------------ Painel: auditoria (admin e auditor)
+  # ------------------------------------------------------------------ Painel: simulador de integração (admin)
+  /painel/simulador/consultas:
+    post:
+      tags: [simulador]
+      summary: Assina com uma chave do tenant e executa a POST /v1/consultas real. Só admin.
+      description: |
+        O servidor busca a chave no tenant da sessão (outra, revogada ou inexistente → 404), assina com o segredo
+        dela (que nunca sai do servidor) e roda a requisição pelo mesmo router e middlewares da `/v1` (assinatura,
+        limite por minuto e lista de IPs; o IP de origem é o do usuário do painel). A consulta é gravada como
+        qualquer outra (ator `api:<chave_id>`) e a auditoria ganha `simulador.consulta` com o usuário que disparou.
+
+        Erros da `/v1` (400, 401, 409, 429) voltam **dentro** de `resposta`, com 200 aqui.
+      parameters: [{ $ref: "#/components/parameters/XCSRF" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chave_id, requisicao]
+              properties:
+                chave_id: { type: string, description: "id da chave (sem o prefixo ck_live_)" }
+                idempotency_key: { type: string, maxLength: 255, description: "Vazia = o servidor gera um UUID" }
+                requisicao: { $ref: "#/components/schemas/ConsultaRequisicao" }
+      responses:
+        "200":
+          description: Requisição assinada, resposta real da /v1 e trechos de código
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResultadoSimulador" }
+        "400": { $ref: "#/components/responses/CorpoInvalido" }
+        "401": { $ref: "#/components/responses/NaoAutorizado" }
+        "403": { $ref: "#/components/responses/Proibido" }
+        "404": { $ref: "#/components/responses/NaoEncontrado" }
+
   /painel/auditoria:
     get:
       tags: [auditoria]
@@ -1025,13 +1062,47 @@ components:
           description: |
             consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
             equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
-            auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu, lgpd.retencao_aplicada (ator sistema:retencao).
+            auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu, lgpd.retencao_aplicada (ator sistema:retencao),
+            simulador.consulta (ator usuario:<id> que disparou pelo simulador; dados: chave_id, via, status_http).
             Os dados nunca levam e-mail, senha ou documento.
-          examples: [consulta.decidida, politica.publicada, chave.criada, equipe.membro_removido, auth.falhou]
+          examples: [consulta.decidida, politica.publicada, chave.criada, equipe.membro_removido, auth.falhou, simulador.consulta]
         ator: { type: string, examples: ["api:<chave_id>", "usuario:<id>"] }
         consulta_id: { type: [string, "null"] }
         criado_em: { type: string, format: date-time }
         hash_ok: { type: boolean, description: "O hash confere com o conteúdo desta linha (a ligação entre linhas é conferida em /integridade)" }
+
+    ResultadoSimulador:
+      type: object
+      required: [requisicao, resposta, consulta_id, trechos]
+      properties:
+        requisicao:
+          type: object
+          required: [metodo, url, cabecalhos, corpo]
+          properties:
+            metodo: { type: string, examples: [POST] }
+            url: { type: string, description: "URL pública da /v1/consultas" }
+            cabecalhos:
+              type: object
+              additionalProperties: { type: string }
+              description: "Authorization (Bearer ck_live_<id>), Content-Type, X-Timestamp, Idempotency-Key, X-Assinatura reais"
+            corpo: { type: string, description: "Texto exato que foi assinado e enviado" }
+        resposta:
+          type: object
+          required: [status, cabecalhos, corpo, duracao_ms]
+          properties:
+            status: { type: integer, description: "Status HTTP real da /v1" }
+            cabecalhos: { type: object, additionalProperties: { type: string }, description: "Content-Type e Retry-After, quando houver" }
+            corpo: { description: "JSON devolvido pela /v1 (ConsultaResposta no 200, Erro nos demais)" }
+            duracao_ms: { type: integer }
+        consulta_id: { type: [string, "null"], description: "Presente quando a /v1 devolveu uma decisão" }
+        trechos:
+          type: object
+          required: [curl, node, python]
+          description: "A mesma requisição em código; leem o segredo de MOTOR_SEGREDO e calculam a assinatura"
+          properties:
+            curl: { type: string }
+            node: { type: string }
+            python: { type: string }
 
     ConsultaResumo:
       type: object
