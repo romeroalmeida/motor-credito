@@ -1632,7 +1632,8 @@ export interface components {
       /**
        * @description consulta.decidida, politica.publicada, chave.criada, chave.girada, chave.revogada, chave.ips_alterados,
        *     equipe.convite_criado, equipe.convite_aceito, equipe.membro_removido, equipe.papel_alterado,
-       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu. Os dados nunca levam e-mail, senha ou documento.
+       *     auth.entrou, auth.falhou, auth.2fa_falhou, auth.saiu, lgpd.retencao_aplicada (ator sistema:retencao).
+       *     Os dados nunca levam e-mail, senha ou documento.
        * @example consulta.decidida
        * @example politica.publicada
        * @example chave.criada

@@ -29,6 +29,7 @@ const ROTULO_EVENTO: Record<string, string> = {
   'auth.falhou': 'Senha errada',
   'auth.2fa_falhou': 'Código 2FA errado',
   'auth.saiu': 'Saiu do painel',
+  'lgpd.retencao_aplicada': 'Retenção LGPD aplicada',
 }
 
 export function AuditoriaPage() {

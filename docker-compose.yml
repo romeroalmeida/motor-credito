@@ -44,6 +44,20 @@ services:
     ports:
       - "127.0.0.1:58080:8080"
 
+  # Retenção LGPD sob demanda (não sobe com "up"): docker compose --profile retencao run --rm retencao
+  # Agende no host, ex. todo dia às 03:10:  10 3 * * *  cd /caminho/motor-credito && docker compose --profile retencao run --rm retencao
+  retencao:
+    build: .
+    profiles: [retencao]
+    entrypoint: ["/retencao"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://motor_api:${POSTGRES_APP_PASSWORD}@postgres:5432/motor?sslmode=disable
+      RETENCAO_DIAS: ${RETENCAO_DIAS:-1825}
+    networks: [interna]
+
   # Painel e API na mesma origem (nginx repassa /painel e /v1): o cookie SameSite=Strict só funciona assim.
   web:
     build:

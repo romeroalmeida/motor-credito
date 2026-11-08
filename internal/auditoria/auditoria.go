@@ -36,6 +36,8 @@ const (
 	EventoLoginFalhou       = "auth.falhou"     // senha errada de usuário existente; {ip}
 	EventoDoisFatoresFalhou = "auth.2fa_falhou" // {ip}
 	EventoSaiu              = "auth.saiu"
+
+	EventoRetencaoAplicada = "lgpd.retencao_aplicada" // {consultas, criadas_antes_de, retencao_dias}; ator sistema:retencao
 )
 
 var hashInicial = make([]byte, sha256.Size)
