@@ -11,6 +11,8 @@ import (
 	"cel.dev/cel-go/common"
 	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/cost"
+
+	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 )
 
 // Limites de cada expressão. Valem na publicação (estimativa estática) e na avaliação (CostLimit).
@@ -20,6 +22,8 @@ const (
 	maxSinais        = 16   // tamanho máximo de fraude.sinais assumido pela estimativa de custo
 	maxTamanhoSinal  = 64   // tamanho máximo de cada sinal assumido pela estimativa de custo
 	maxMultiploRenda = 1000 // 100× a renda
+	// TaxaMaximaBps é o teto de taxa_bps e de acrescimo_taxa_bps (1000% a.m.): a soma nunca estoura int.
+	TaxaMaximaBps    = 100_000
 	recursaoMaxima   = 32
 	identOpcional    = "opcional" // mapa oculto que o has() consulta; o cliente não o referencia
 	campoSinais      = "fraude.sinais"
@@ -152,6 +156,9 @@ func validarContraproposta(cp Contraproposta) error {
 	if cp.PrazoMaximo < 0 || cp.AcrescimoTaxaBps < 0 {
 		return errors.New("prazo máximo e acréscimo de taxa não podem ser negativos")
 	}
+	if cp.AcrescimoTaxaBps > TaxaMaximaBps {
+		return fmt.Errorf("acréscimo de taxa acima de %d bps", TaxaMaximaBps)
+	}
 	return nil
 }
 
@@ -165,6 +172,10 @@ func validarFaixa(f Faixa) error {
 		return errors.New("taxa, limite e múltiplo não podem ser negativos")
 	case f.LimiteFixo == 0:
 		return errors.New("faixa que aprova precisa de limite fixo maior que zero")
+	case f.TaxaBps > TaxaMaximaBps:
+		return fmt.Errorf("taxa acima de %d bps", TaxaMaximaBps)
+	case f.LimiteFixo > dinheiro.ValorMaximo:
+		return fmt.Errorf("limite fixo acima de %d centavos", dinheiro.ValorMaximo)
 	case f.MultiploRenda > maxMultiploRenda:
 		return fmt.Errorf("múltiplo de renda acima de %d", maxMultiploRenda)
 	}
@@ -421,19 +432,30 @@ func valorInteiroCEL(valor any, lista bool) (string, error) {
 	return "[" + strings.Join(partes, ", ") + "]", nil
 }
 
+// maxInteiroExato é 2^53−1: acima disso o float64 do JSON não representa todo inteiro (2^53+1 chega como 2^53),
+// e a regra publicada seria outra que a digitada. Vale também para int/int64, que voltam do banco como JSON.
+const maxInteiroExato = 1<<53 - 1
+
 func inteiro(valor any) (int64, error) {
+	var n int64
 	switch v := valor.(type) {
 	case int:
-		return int64(v), nil
+		n = int64(v)
 	case int64:
-		return v, nil
+		n = v
 	case float64:
-		if v != math.Trunc(v) || v > math.MaxInt64 || v < math.MinInt64 {
-			return 0, fmt.Errorf("valor precisa ser inteiro: %v", v)
+		// Compara em float antes de converter: int64(2^63) não é definido (vira MinInt64 em amd64).
+		if v != math.Trunc(v) || math.Abs(v) > maxInteiroExato {
+			return 0, fmt.Errorf("valor precisa ser inteiro entre -%d e %d: %v", int64(maxInteiroExato), int64(maxInteiroExato), v)
 		}
-		return int64(v), nil
+		n = int64(v)
+	default:
+		return 0, fmt.Errorf("valor precisa ser inteiro: %v", valor)
 	}
-	return 0, fmt.Errorf("valor precisa ser inteiro: %v", valor)
+	if n > maxInteiroExato || n < -maxInteiroExato {
+		return 0, fmt.Errorf("valor precisa ser inteiro entre -%d e %d: %v", int64(maxInteiroExato), int64(maxInteiroExato), n)
+	}
+	return n, nil
 }
 
 func textos(valor any) ([]string, error) {

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/romeroalmeida/motor-credito/internal/antifraude"
 	"github.com/romeroalmeida/motor-credito/internal/bureau"
+	"github.com/romeroalmeida/motor-credito/internal/dinheiro"
 	"github.com/romeroalmeida/motor-credito/internal/politica"
 )
 
@@ -15,7 +17,27 @@ type contadorFake struct{ err error }
 func (c contadorFake) ConsultasDoc24h(context.Context, []byte) (int, error)       { return 0, c.err }
 func (c contadorFake) DocsPorDispositivo24h(context.Context, string) (int, error) { return 0, c.err }
 
-func servicoTeste(b bureau.Bureau, c contadorFake) *Servico {
+// contadorLento só responde quando o contexto acaba (ou, se ninguém cancelar, depois de 1s e sem erro).
+type contadorLento struct{}
+
+func (contadorLento) ConsultasDoc24h(ctx context.Context, _ []byte) (int, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(time.Second):
+		return 0, nil
+	}
+}
+func (c contadorLento) DocsPorDispositivo24h(ctx context.Context, _ string) (int, error) {
+	return c.ConsultasDoc24h(ctx, nil)
+}
+
+// bureauFixo devolve sempre o mesmo resultado.
+type bureauFixo struct{ r bureau.Resultado }
+
+func (b bureauFixo) Consultar(context.Context, string) (bureau.Resultado, error) { return b.r, nil }
+
+func servicoTeste(b bureau.Bureau, c antifraude.Contador) *Servico {
 	return &Servico{bureau: b, contador: c, chaveHMAC: make([]byte, 32), chaveCifra: make([]byte, 32),
 		timeout: 100 * time.Millisecond, agora: func() time.Time { return time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC) }}
 }
@@ -139,7 +161,111 @@ func TestValidar(t *testing.T) {
 			t.Errorf("faltou erro em %s (%v)", c, campos)
 		}
 	}
+	if _, ok := req(bureau.CPFScoreAlto, dinheiro.ValorMaximo+1).Validar()["pedido.valor"]; !ok {
+		t.Error("pedido.valor acima do teto aceito")
+	}
+	if campos := req(bureau.CPFScoreAlto, dinheiro.ValorMaximo).Validar(); len(campos) != 0 {
+		t.Errorf("pedido no teto recusado: %v", campos)
+	}
 	if campos := req(bureau.CPFScoreAlto, 1).Validar(); len(campos) != 0 {
 		t.Errorf("requisição válida recusada: %v", campos)
 	}
 }
+
+func motivoFinal(r registro) string {
+	if len(r.Motivos) == 0 {
+		return ""
+	}
+	return r.Motivos[len(r.Motivos)-1].Codigo
+}
+
+// Teste fraco 8 e achado 8: o nascimento VÁLIDO do bureau prevalece sobre o informado (menor que se diz adulto
+// cai no MENOR_IDADE); nascimento do bureau ausente ou inválido cai para o informado. Agora = 2026-11-07.
+func TestIdadePeloBureau(t *testing.T) {
+	modelo := compilar(t, politica.ModeloEmprestimoPF())
+	casos := []struct {
+		nome                string
+		doBureau, informado string
+		menor               bool
+	}{
+		{"bureau menor, informado adulto: vale o bureau", "2010-01-01", "1980-01-01", true},
+		{"bureau adulto, informado menor: vale o bureau", "1980-01-01", "2010-01-01", false},
+		{"bureau faz 18 hoje", "2008-11-07", "2010-01-01", false},
+		{"bureau faz 18 amanhã", "2008-11-08", "1980-01-01", true},
+		{"bureau ausente: vale o informado", "", "2010-01-01", true},
+		{"bureau em formato inválido: vale o informado", "01/01/1980", "2010-01-01", true},
+		{"bureau com data impossível: vale o informado", "1980-02-30", "2010-01-01", true},
+		{"bureau no futuro: vale o informado", "2030-01-01", "2010-01-01", true},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			b := bureauFixo{bureau.Resultado{Score: 920, Situacao: bureau.Regular, Nascimento: c.doBureau}}
+			r := req(bureau.CPFScoreAlto, 100_000)
+			r.Dados.Nascimento = c.informado
+			av := servicoTeste(b, contadorFake{}).avaliar(context.Background(), r, fonteFixa(modelo))
+			if menor := motivoFinal(av.reg) == "MENOR_IDADE"; menor != c.menor || (!c.menor && av.reg.Status != "aprovado") {
+				t.Fatalf("status %s motivos %v; quer menor=%v", av.reg.Status, av.reg.Motivos, c.menor)
+			}
+		})
+	}
+}
+
+// Teste fraco 9: a renda informada prevalece sobre a do bureau; sem renda informada, vale a do bureau.
+// Faixa A: limite = min(3.000.000, renda×8). Pedido de 1.000.000.
+func TestRendaInformadaPrevalece(t *testing.T) {
+	modelo := compilar(t, politica.ModeloEmprestimoPF())
+	casos := []struct {
+		nome                string
+		informada, doBureau *int64
+		status              string
+		valor               int64
+	}{
+		{"informada baixa, bureau alta: contraproposta pela informada", ptr(int64(100_000)), ptr(int64(1_200_000)), "contraproposta", 800_000},
+		{"informada alta, bureau baixa: aprova pela informada", ptr(int64(1_200_000)), ptr(int64(100_000)), "aprovado", 1_000_000},
+		{"sem informada: vale o bureau", nil, ptr(int64(100_000)), "contraproposta", 800_000},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			b := bureauFixo{bureau.Resultado{Score: 920, Situacao: bureau.Regular, Renda: c.doBureau}}
+			r := req(bureau.CPFScoreAlto, 1_000_000)
+			r.Dados.Renda = c.informada
+			av := servicoTeste(b, contadorFake{}).avaliar(context.Background(), r, fonteFixa(modelo))
+			if av.reg.Status != c.status || av.reg.Oferta == nil || av.reg.Oferta.Valor != c.valor {
+				t.Fatalf("status %s oferta %+v; quer %s %d", av.reg.Status, av.reg.Oferta, c.status, c.valor)
+			}
+		})
+	}
+}
+
+// Teste fraco 10: o antifraude roda dentro do mesmo tempo máximo do bureau; contador travado nega no prazo.
+func TestAntifraudeDentroDoTempoMaximo(t *testing.T) {
+	s := servicoTeste(bureau.NovoSimulado(0), contadorLento{})
+	inicio := time.Now()
+	av := s.avaliar(context.Background(), req(bureau.CPFScoreAlto, 100_000), fonteFixa(compilar(t, politica.ModeloEmprestimoPF())))
+	if decorrido := time.Since(inicio); decorrido > 5*s.timeout {
+		t.Fatalf("demorou %v; o timeout era %v", decorrido, s.timeout)
+	}
+	if av.reg.Status != StatusNegado || motivoFinal(av.reg) != MotivoAntifraudeIndisponivel {
+		t.Fatalf("decisão = %s %v", av.reg.Status, av.reg.Motivos)
+	}
+}
+
+// Achado 12: score fora de 0..1000 é resposta corrompida do bureau: nega como indisponível (fail-closed).
+func TestScoreForaDaFaixa(t *testing.T) {
+	modelo := compilar(t, politica.ModeloEmprestimoPF())
+	casos := []struct {
+		score  int
+		status string
+	}{{-1, StatusNegado}, {1001, StatusNegado}, {1 << 40, StatusNegado}, {0, StatusNegado}, {1000, "aprovado"}}
+	for _, c := range casos {
+		b := bureauFixo{bureau.Resultado{Score: c.score, Situacao: bureau.Regular}}
+		av := servicoTeste(b, contadorFake{}).avaliar(context.Background(), req(bureau.CPFScoreAlto, 100_000), fonteFixa(modelo))
+		indisponivel := motivoFinal(av.reg) == MotivoBureauIndisponivel
+		foraDaFaixa := c.score < 0 || c.score > 1000
+		if av.reg.Status != c.status || indisponivel != foraDaFaixa || (av.reg.Score != nil) == foraDaFaixa {
+			t.Errorf("score %d: status %s score %v motivos %v", c.score, av.reg.Status, av.reg.Score, av.reg.Motivos)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

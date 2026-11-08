@@ -700,7 +700,14 @@ components:
     XAssinatura:
       { name: X-Assinatura, in: header, required: true, schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
     IdempotencyKey:
-      { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Reenvio com a mesma chave e o mesmo corpo devolve a decisão já gravada, sem nova consulta ao bureau.
+        Mesma chave com outro corpo → 409 conflito_idempotencia, inclusive quando as duas requisições chegam
+        ao mesmo tempo (a segunda espera a primeira terminar).
+      schema: { type: string, minLength: 1, maxLength: 255 }
     XCSRF:
       { name: X-CSRF, in: header, required: true, schema: { type: string }, description: Igual ao cookie csrf }
 
@@ -796,7 +803,7 @@ components:
       type: object
       required: [valor, prazo]
       properties:
-        valor: { type: integer, format: int64, minimum: 1, description: Centavos }
+        valor: { type: integer, format: int64, minimum: 1, maximum: 10000000000000, description: "Centavos (teto 1e13 = R$ 100 bilhões; acima → 400 em pedido.valor)" }
         prazo: { type: integer, minimum: 1, maximum: 420, description: Meses }
 
     DadosOpcionais:
@@ -956,12 +963,12 @@ components:
                  pedido.valor, pedido.prazo, fraude.risco, fraude.sinais]
         operador: { type: string, enum: ["==", "!=", "<", "<=", ">", ">=", in] }
         valor:
-          description: Número (centavos para dinheiro), texto, ou lista (com `in`)
+          description: "Número (centavos para dinheiro), texto, ou lista (com `in`). Inteiros entre −(2^53−1) e 2^53−1: fora disso → 422 na regra"
           oneOf:
-            - type: integer
+            - { type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }
             - type: string
             - type: array
-              items: { oneOf: [{ type: integer }, { type: string }] }
+              items: { oneOf: [{ type: integer, minimum: -9007199254740991, maximum: 9007199254740991 }, { type: string }] }
 
     Corte:
       type: object
@@ -980,9 +987,9 @@ components:
         condicoes: { type: array, items: { $ref: "#/components/schemas/Condicao" } }
         cel: { type: string }
         nega: { type: boolean }
-        taxa_bps: { type: integer, minimum: 0 }
-        limite_fixo: { type: integer, format: int64, minimum: 0, description: Centavos }
-        multiplo_renda_x10: { type: integer, minimum: 0, description: "30 = 3,0× renda" }
+        taxa_bps: { type: integer, minimum: 0, maximum: 100000, description: "Pontos-base ao mês (teto 100000; acima → 422, regra faixas[i])" }
+        limite_fixo: { type: integer, format: int64, minimum: 0, maximum: 10000000000000, description: "Centavos (teto 1e13; acima → 422 na publicação, regra faixas[i])" }
+        multiplo_renda_x10: { type: integer, minimum: 0, maximum: 1000, description: "30 = 3,0× renda" }
 
     Contraproposta:
       type: object
@@ -990,7 +997,7 @@ components:
       properties:
         ativa: { type: boolean }
         prazo_maximo: { type: integer, minimum: 0, description: 0 = mantém o prazo pedido }
-        acrescimo_taxa_bps: { type: integer, minimum: 0 }
+        acrescimo_taxa_bps: { type: integer, minimum: 0, maximum: 100000, description: "Teto 100000; acima → 422, regra contraproposta" }
 
     Politica:
       type: object

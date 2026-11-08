@@ -2,6 +2,7 @@ package repositorio
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/romeroalmeida/motor-credito/internal/auditoria"
+	"github.com/romeroalmeida/motor-credito/internal/tenant"
 )
 
 // NovaConsulta é a linha gravada a cada decisão. Nada de documento em claro: hash e cifrado.
@@ -29,51 +31,100 @@ type NovaConsulta struct {
 	AntifraudeRisco *int
 	PoliticaID      *string
 	PoliticaVersao  *int
-	IdempotencyKey  *string
+	IdempotencyKey  *string // preenchidos por GravarConsultaIdempotente
+	IdempotencyHash []byte
 	CriadoEm        time.Time
 }
 
-// GravarConsulta grava a consulta, o evento de velocidade e a auditoria numa transação só.
-// Com IdempotencyKey, se outra requisição com a mesma chave já gravou, não grava de novo e devolve a decisão dela.
-func (r *Repo) GravarConsulta(ctx context.Context, c NovaConsulta, ator string) (decisaoExistente []byte, err error) {
-	err = r.emTx(ctx, func(tx pgx.Tx) error {
-		if c.IdempotencyKey != nil {
-			// Duas requisições simultâneas com a mesma chave: a segunda espera a primeira e reaproveita.
-			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('idem:' || $1 || ':' || $2, 0))`,
-				r.tenantID, *c.IdempotencyKey); err != nil {
+// GravarConsulta grava a consulta sem Idempotency-Key, o evento de velocidade e a auditoria numa transação só.
+func (r *Repo) GravarConsulta(ctx context.Context, c NovaConsulta, ator string) error {
+	if err := r.emTx(ctx, func(tx pgx.Tx) error { return r.inserir(ctx, tx, c, ator) }); err != nil {
+		return fmt.Errorf("gravar consulta: %w", err)
+	}
+	return nil
+}
+
+// Espera por uma Idempotency-Key que outra requisição está decidindo.
+const (
+	intervaloTrava = 20 * time.Millisecond
+	esperaMaxTrava = 10 * time.Second // muito acima do tempo máximo das fontes (2s)
+)
+
+// GravarConsultaIdempotente reserva (tenant, chave) numa advisory lock e, dentro dela, antes de decidir:
+// chave já gravada com o mesmo hash de corpo → devolve a decisão gravada sem chamar decidir;
+// com outro hash (ou hash nulo, de antes da 0003) → tenant.ErrIdempotenciaConflito; nada gravado → decidir() e grava.
+// Assim o bureau roda no máximo uma vez por chave e nenhum corpo recebe a decisão de outro.
+//
+// A trava é tentada sem bloquear (pg_try_advisory_xact_lock): quem espera devolve a conexão ao pool entre as
+// tentativas. Bloquear segurando a conexão esgotaria o pool com reenvios da mesma chave, e quem tem a trava
+// precisa de outras conexões (política, contador antifraude) para decidir.
+func (r *Repo) GravarConsultaIdempotente(ctx context.Context, chave string, hashCorpo []byte, ator string,
+	decidir func() (NovaConsulta, error)) (decisaoExistente []byte, err error) {
+	limite := time.Now().Add(esperaMaxTrava)
+	for {
+		travou := false
+		err := r.emTx(ctx, func(tx pgx.Tx) error {
+			if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended('idem:' || $1 || ':' || $2, 0))`,
+				r.tenantID, chave).Scan(&travou); err != nil || !travou {
 				return err
 			}
-			err := tx.QueryRow(ctx, `SELECT decisao FROM consultas WHERE tenant_id = $1 AND idempotency_key = $2 LIMIT 1`,
-				r.tenantID, *c.IdempotencyKey).Scan(&decisaoExistente)
+			var hashGuardado []byte
+			err := tx.QueryRow(ctx, `SELECT decisao, idempotency_hash FROM consultas WHERE tenant_id = $1 AND idempotency_key = $2`,
+				r.tenantID, chave).Scan(&decisaoExistente, &hashGuardado)
 			if err == nil {
+				if subtle.ConstantTimeCompare(hashGuardado, hashCorpo) != 1 {
+					decisaoExistente = nil
+					return tenant.ErrIdempotenciaConflito
+				}
 				return nil
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO consultas (id, tenant_id, doc_hash, doc_cifrado, doc_tipo, finalidade, base_legal,
-				entrada, status, score, faixa_risco, decisao, antifraude_risco, politica_id, politica_versao, idempotency_key, criado_em)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17)`,
-			c.ID, r.tenantID, c.DocHash, c.DocCifrado, c.DocTipo, c.Finalidade, c.BaseLegal, string(c.Entrada), c.Status,
-			c.Score, c.FaixaRisco, string(c.Decisao), c.AntifraudeRisco, c.PoliticaID, c.PoliticaVersao, c.IdempotencyKey, c.CriadoEm); err != nil {
-			return fmt.Errorf("inserir consulta: %w", err)
-		}
-		if c.DocHash != nil {
-			if _, err := tx.Exec(ctx, `INSERT INTO antifraude_eventos (doc_hash, dispositivo_hash) VALUES ($1, $2)`,
-				c.DocHash, c.DispositivoHash); err != nil {
-				return fmt.Errorf("registrar evento de velocidade: %w", err)
+			c, err := decidir()
+			if err != nil {
+				return err
 			}
-		}
-		return auditoria.Registrar(ctx, tx, r.tenantID, auditoria.EventoConsultaDecidida, ator, &c.ID, map[string]any{
-			"status": c.Status, "score": c.Score, "faixa_risco": c.FaixaRisco,
-			"politica_id": c.PoliticaID, "politica_versao": c.PoliticaVersao,
+			c.IdempotencyKey, c.IdempotencyHash = &chave, hashCorpo
+			return r.inserir(ctx, tx, c, ator)
 		})
-	})
-	if err != nil {
-		return nil, fmt.Errorf("gravar consulta: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("gravar consulta idempotente: %w", err)
+		}
+		if travou {
+			return decisaoExistente, nil
+		}
+		if time.Now().After(limite) {
+			return nil, errors.New("gravar consulta idempotente: chave ocupada por tempo demais")
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("gravar consulta idempotente: %w", ctx.Err())
+		case <-time.After(intervaloTrava):
+		}
 	}
-	return decisaoExistente, nil
+}
+
+func (r *Repo) inserir(ctx context.Context, tx pgx.Tx, c NovaConsulta, ator string) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO consultas (id, tenant_id, doc_hash, doc_cifrado, doc_tipo, finalidade, base_legal,
+			entrada, status, score, faixa_risco, decisao, antifraude_risco, politica_id, politica_versao, idempotency_key,
+			idempotency_hash, criado_em)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18)`,
+		c.ID, r.tenantID, c.DocHash, c.DocCifrado, c.DocTipo, c.Finalidade, c.BaseLegal, string(c.Entrada), c.Status,
+		c.Score, c.FaixaRisco, string(c.Decisao), c.AntifraudeRisco, c.PoliticaID, c.PoliticaVersao, c.IdempotencyKey,
+		c.IdempotencyHash, c.CriadoEm); err != nil {
+		return fmt.Errorf("inserir consulta: %w", err)
+	}
+	if c.DocHash != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO antifraude_eventos (doc_hash, dispositivo_hash) VALUES ($1, $2)`,
+			c.DocHash, c.DispositivoHash); err != nil {
+			return fmt.Errorf("registrar evento de velocidade: %w", err)
+		}
+	}
+	return auditoria.Registrar(ctx, tx, r.tenantID, auditoria.EventoConsultaDecidida, ator, &c.ID, map[string]any{
+		"status": c.Status, "score": c.Score, "faixa_risco": c.FaixaRisco,
+		"politica_id": c.PoliticaID, "politica_versao": c.PoliticaVersao,
+	})
 }
 
 // LinhaConsulta é a consulta como está no banco (o documento continua cifrado).

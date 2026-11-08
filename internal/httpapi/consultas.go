@@ -64,9 +64,9 @@ func (h handlers) criarConsulta(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := h.Consultas.Decidir(r.Context(), t.ID, auditoria.AtorAPI(chaveID), chaveIdem, req)
-	if err != nil {
-		falhaInterna(w, r, err)
+	// O cache acima é atalho; quem garante a idempotência (inclusive na corrida) é a trava dentro de Decidir.
+	resp, err := h.Consultas.Decidir(r.Context(), t.ID, auditoria.AtorAPI(chaveID), chaveIdem, hash[:], req)
+	if h.erroIdempotencia(w, r, err) {
 		return
 	}
 	saida, err := json.Marshal(resp)
@@ -80,7 +80,7 @@ func (h handlers) criarConsulta(w http.ResponseWriter, r *http.Request) {
 			h.erroIdempotencia(w, r, err)
 			return
 		}
-		if err != nil { // a consulta já está gravada; o reenvio cai na trava da própria consulta
+		if err != nil { // a consulta já está gravada com o hash; o reenvio cai na trava da própria consulta
 			slog.ErrorContext(r.Context(), "guardar idempotência", "erro", err)
 		}
 	}

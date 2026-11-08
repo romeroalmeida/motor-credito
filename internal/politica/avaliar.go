@@ -44,16 +44,17 @@ func (c *Compilada) Avaliar(ctx Contexto) (Decisao, error) {
 		d.Trilha = append(d.Trilha, RegraAvaliada{Bloco: blocoFaixa, Rotulo: faixa.Rotulo, Expressao: regra.expressao, Bateu: bateu})
 		if bateu {
 			d.FaixaRisco = faixa.Rotulo
-			return c.ofertar(d, faixa, ctx), nil
+			return c.ofertar(d, faixa, ctx)
 		}
 	}
 	return negar(d, Motivo{Codigo: MotivoSemFaixa, Texto: "Nenhuma faixa de preço atende o perfil"}), nil
 }
 
 // ofertar decide a partir da faixa que casou: nega, aprova o pedido ou faz contraproposta no limite.
-func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) Decisao {
+// Parcela que não cabe em int64 é erro (quem chama nega), nunca oferta com valor corrompido.
+func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) (Decisao, error) {
 	if faixa.Nega {
-		return negar(d, Motivo{Codigo: MotivoFaixaNega, Texto: "Perfil na faixa " + faixa.Rotulo + " não é atendido"})
+		return negar(d, Motivo{Codigo: MotivoFaixaNega, Texto: "Perfil na faixa " + faixa.Rotulo + " não é atendido"}), nil
 	}
 	limite := limiteDaFaixa(faixa, ctx.Renda)
 	cabe := ctx.PedidoValor <= limite
@@ -61,24 +62,30 @@ func (c *Compilada) ofertar(d Decisao, faixa Faixa, ctx Contexto) Decisao {
 		Bloco: blocoContraoferta, Rotulo: faixa.Rotulo, Expressao: fmt.Sprintf("pedido.valor <= %d", limite), Bateu: cabe,
 	})
 	if cabe {
-		d.Status = Aprovado
-		d.Oferta = novaOferta(ctx.PedidoValor, ctx.PedidoPrazo, faixa.TaxaBps)
-		return d
+		oferta, err := novaOferta(ctx.PedidoValor, ctx.PedidoPrazo, faixa.TaxaBps)
+		if err != nil {
+			return Decisao{}, err
+		}
+		d.Status, d.Oferta = Aprovado, oferta
+		return d, nil
 	}
 
 	acimaDoLimite := Motivo{Codigo: MotivoLimiteFaixa, Texto: "Valor pedido acima do limite para o score"}
 	cp := c.politica.Contraproposta
 	if !cp.Ativa || limite <= 0 {
-		return negar(d, acimaDoLimite)
+		return negar(d, acimaDoLimite), nil
 	}
 	prazo := ctx.PedidoPrazo
 	if cp.PrazoMaximo > 0 {
 		prazo = min(prazo, cp.PrazoMaximo)
 	}
-	d.Status = Contraproposto
-	d.Oferta = novaOferta(limite, prazo, faixa.TaxaBps+cp.AcrescimoTaxaBps)
+	oferta, err := novaOferta(limite, prazo, faixa.TaxaBps+cp.AcrescimoTaxaBps)
+	if err != nil {
+		return Decisao{}, err
+	}
+	d.Status, d.Oferta = Contraproposto, oferta
 	d.Motivos = append(d.Motivos, acimaDoLimite)
-	return d
+	return d, nil
 }
 
 // limiteDaFaixa = min(LimiteFixo, renda×múltiplo/10); sem renda ou múltiplo 0, vale o LimiteFixo.
@@ -92,8 +99,12 @@ func limiteDaFaixa(f Faixa, renda *int64) int64 {
 	return min(f.LimiteFixo, *renda*int64(f.MultiploRenda)/10)
 }
 
-func novaOferta(valor int64, prazo, taxaBps int) *Oferta {
-	return &Oferta{Valor: valor, Prazo: prazo, TaxaBps: taxaBps, Parcela: dinheiro.Parcela(valor, prazo, taxaBps)}
+func novaOferta(valor int64, prazo, taxaBps int) (*Oferta, error) {
+	parcela, err := dinheiro.Parcela(valor, prazo, taxaBps)
+	if err != nil {
+		return nil, fmt.Errorf("parcela de %d em %dx a %d bps: %w", valor, prazo, taxaBps, err)
+	}
+	return &Oferta{Valor: valor, Prazo: prazo, TaxaBps: taxaBps, Parcela: parcela}, nil
 }
 
 func negar(d Decisao, m Motivo) Decisao {

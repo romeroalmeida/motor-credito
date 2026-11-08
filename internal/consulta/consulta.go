@@ -27,6 +27,9 @@ import (
 // TempoMaximoFontes é o tempo total para bureau + antifraude (desenho §3).
 const TempoMaximoFontes = 2 * time.Second
 
+// scoreMaximo é o topo da escala de score do bureau (0..1000, OpenAPI).
+const scoreMaximo = 1000
+
 // Servico decide e consulta decisões.
 type Servico struct {
 	pool       *pgxpool.Pool
@@ -83,6 +86,10 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 	if b.Situacao == bureau.Falecido {
 		return documentoInvalido(av)
 	}
+	if b.Score < 0 || b.Score > scoreMaximo { // resposta corrompida: não decide com ela
+		slog.WarnContext(ctx, "bureau devolveu score fora da faixa", "documento", documento.Mascarar(doc), "score", b.Score)
+		return negar(av, MotivoBureauIndisponivel, "Bureau de crédito indisponível; tente novamente")
+	}
 	score := b.Score
 	av.reg.Score = &score
 
@@ -117,7 +124,7 @@ func (s *Servico) avaliar(ctx context.Context, req Requisicao, fonte fontePoliti
 }
 
 // contexto monta o que as regras enxergam. Renda: a informada vale sobre a do bureau.
-// Idade: o nascimento do bureau vale sobre o informado (o cliente pode errar ou mentir).
+// Idade: o nascimento válido do bureau vale sobre o informado (o cliente pode errar ou mentir).
 func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Resultado) politica.Contexto {
 	c := politica.Contexto{
 		Score: b.Score, Restricoes: b.Restricoes, Protestos: b.Protestos, DividaTotal: b.DividaTotal,
@@ -127,11 +134,12 @@ func (s *Servico) contexto(req Requisicao, b bureau.Resultado, af antifraude.Res
 	if c.Renda == nil {
 		c.Renda = b.Renda
 	}
-	nascimento := b.Nascimento
-	if nascimento == "" {
-		nascimento = req.Dados.Nascimento
+	// Bureau ausente ou inválido (formato, data impossível, futuro) cai para o informado; o válido sempre vale.
+	idade, ok := idadeEm(b.Nascimento, s.agora())
+	if !ok {
+		idade, ok = idadeEm(req.Dados.Nascimento, s.agora())
 	}
-	if idade, ok := idadeEm(nascimento, s.agora()); ok {
+	if ok {
 		c.Idade = &idade
 	}
 	return c
@@ -163,18 +171,28 @@ func documentoInvalido(av avaliacao) avaliacao {
 }
 
 // Decidir roda a consulta e grava. ator é "api:<chave>"; idemKey vazio = sem idempotência.
-// Com idemKey já gravada por outra requisição, devolve a resposta dela sem gravar de novo.
-func (s *Servico) Decidir(ctx context.Context, tenantID, ator, idemKey string, req Requisicao) (Resposta, error) {
+// Com idemKey, a chave é reservada com hashCorpo antes de decidir: mesmo corpo já decidido devolve a resposta
+// gravada (sem chamar o bureau de novo); outro corpo devolve tenant.ErrIdempotenciaConflito.
+func (s *Servico) Decidir(ctx context.Context, tenantID, ator, idemKey string, hashCorpo []byte, req Requisicao) (Resposta, error) {
 	repo := repositorio.ParaTenant(s.pool, tenantID)
-	av := s.avaliar(ctx, req, s.politicaPublicada(repo))
-	av.reg.ID = plataforma.NovoID("cons")
-	av.reg.CriadoEm = s.agora().UTC().Truncate(time.Microsecond) // precisão do timestamptz
-
-	nova, err := s.linha(av, req, idemKey)
-	if err != nil {
-		return Resposta{}, err
+	var av avaliacao
+	decidir := func() (repositorio.NovaConsulta, error) {
+		av = s.avaliar(ctx, req, s.politicaPublicada(repo))
+		av.reg.ID = plataforma.NovoID("cons")
+		av.reg.CriadoEm = s.agora().UTC().Truncate(time.Microsecond) // precisão do timestamptz
+		return s.linha(av, req)
 	}
-	existente, err := repo.GravarConsulta(ctx, nova, ator)
+	if idemKey == "" {
+		nova, err := decidir()
+		if err != nil {
+			return Resposta{}, err
+		}
+		if err := repo.GravarConsulta(ctx, nova, ator); err != nil {
+			return Resposta{}, err
+		}
+		return av.reg.Resposta, nil
+	}
+	existente, err := repo.GravarConsultaIdempotente(ctx, idemKey, hashCorpo, ator, decidir)
 	if err != nil {
 		return Resposta{}, err
 	}
@@ -188,7 +206,7 @@ func (s *Servico) Decidir(ctx context.Context, tenantID, ator, idemKey string, r
 	return av.reg.Resposta, nil
 }
 
-func (s *Servico) linha(av avaliacao, req Requisicao, idemKey string) (repositorio.NovaConsulta, error) {
+func (s *Servico) linha(av avaliacao, req Requisicao) (repositorio.NovaConsulta, error) {
 	decisao, err := json.Marshal(av.reg)
 	if err != nil {
 		return repositorio.NovaConsulta{}, fmt.Errorf("serializar decisão: %w", err)
@@ -217,9 +235,6 @@ func (s *Servico) linha(av avaliacao, req Requisicao, idemKey string) (repositor
 	}
 	if av.reg.Politica != nil {
 		n.PoliticaID, n.PoliticaVersao = &av.reg.Politica.ID, &av.reg.Politica.Versao
-	}
-	if idemKey != "" {
-		n.IdempotencyKey = &idemKey
 	}
 	return n, nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -178,7 +179,7 @@ func TestLimiteEContraproposta(t *testing.T) {
 				return
 			}
 			want := *tc.oferta
-			want.Parcela = dinheiro.Parcela(want.Valor, want.Prazo, want.TaxaBps)
+			want.Parcela, _ = dinheiro.Parcela(want.Valor, want.Prazo, want.TaxaBps)
 			if d.Oferta == nil || *d.Oferta != want {
 				t.Fatalf("oferta %+v, want %+v", d.Oferta, want)
 			}
@@ -284,6 +285,12 @@ func TestCompilar_Recusa(t *testing.T) {
 	semRotulo.Faixas[1].Rotulo = ""
 	negativo := ModeloEmprestimoPF()
 	negativo.Contraproposta.PrazoMaximo = -1
+	taxaAcima := ModeloEmprestimoPF()
+	taxaAcima.Faixas[1].TaxaBps = TaxaMaximaBps + 1
+	acrescimoAcima := ModeloEmprestimoPF()
+	acrescimoAcima.Contraproposta.AcrescimoTaxaBps = TaxaMaximaBps + 1
+	limiteAcima := ModeloEmprestimoPF()
+	limiteAcima.Faixas[1].LimiteFixo = dinheiro.ValorMaximo + 1
 
 	casos := []struct {
 		nome   string
@@ -301,6 +308,9 @@ func TestCompilar_Recusa(t *testing.T) {
 		{"faixa sem limite", semLimite, "faixas[1]", "limite fixo"},
 		{"faixa sem rótulo", semRotulo, "faixas[1]", "sem rótulo"},
 		{"contraproposta negativa", negativo, "contraproposta", "negativos"},
+		{"limite fixo acima do teto", limiteAcima, "faixas[1]", "limite fixo acima"},
+		{"taxa acima do teto", taxaAcima, "faixas[1]", "taxa acima"},
+		{"acréscimo acima do teto", acrescimoAcima, "contraproposta", "acréscimo de taxa acima"},
 		{"renda sem has", avancada("renda > 100"), "cortes[0]", "renda usada sem has(renda)"},
 		{"idade sem has", avancada("idade < 18"), "cortes[0]", "idade usada sem has(idade)"},
 		{"has depois do uso", avancada("idade < 18 && has(idade)"), "cortes[0]", "sem has(idade)"},
@@ -400,6 +410,31 @@ func TestAvaliar_PedidoInvalido(t *testing.T) {
 	}
 }
 
+// Achado 1: o teto de limite_fixo barra na publicação; se ainda assim a parcela não couber em int64
+// (política montada sem Compilar), Avaliar devolve erro em vez de oferta com parcela negativa.
+func TestLimiteFixoNoTeto(t *testing.T) {
+	p := Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: 290, LimiteFixo: dinheiro.ValorMaximo}}}
+	d := avaliar(t, compilar(t, p), Contexto{PedidoValor: dinheiro.ValorMaximo, PedidoPrazo: 1})
+	if d.Status != Aprovado || d.Oferta == nil || d.Oferta.Parcela <= 0 {
+		t.Fatalf("no teto: %+v", d)
+	}
+	c := compilar(t, p)
+	c.politica.Faixas[0].LimiteFixo = math.MaxInt64
+	if d, err := c.Avaliar(Contexto{PedidoValor: 9_000_000_000_000_000_000, PedidoPrazo: 1}); err == nil {
+		t.Fatalf("parcela estourada virou decisão: %+v", d)
+	}
+}
+
+// Achado 2: taxa e acréscimo no teto exato compilam, e a contraproposta soma sem estourar.
+func TestTaxaNoTeto(t *testing.T) {
+	p := Politica{Faixas: []Faixa{{Rotulo: "A", TaxaBps: TaxaMaximaBps, LimiteFixo: dinheiro.ValorMaximo}},
+		Contraproposta: Contraproposta{Ativa: true, AcrescimoTaxaBps: TaxaMaximaBps}}
+	d := avaliar(t, compilar(t, p), Contexto{PedidoValor: dinheiro.ValorMaximo + 1, PedidoPrazo: 1})
+	if d.Status != Contraproposto || d.Oferta.TaxaBps != 2*TaxaMaximaBps || d.Oferta.Parcela <= 0 {
+		t.Fatalf("no teto: %+v", d.Oferta)
+	}
+}
+
 func TestErroDivisaoPorZeroNaoViraDecisao(t *testing.T) {
 	c := compilar(t, avancada(`score / bureau.restricoes > 1`))
 	if _, err := c.Avaliar(base(700)); err == nil {
@@ -445,5 +480,69 @@ func TestErroPolitica_Mensagem(t *testing.T) {
 	err := (&ErroPolitica{Problemas: []Problema{{"faixas[1]", "x"}, {"cortes[0]", "y"}}}).Error()
 	if err != "política inválida: faixas[1]: x; cortes[0]: y" {
 		t.Fatal(err)
+	}
+}
+
+// Teste fraco 6: renda×múltiplo que estouraria int64 vale o limite fixo, nos dois lados do limite exato.
+func TestLimiteDaFaixa_RendaQueEstoura(t *testing.T) {
+	f := Faixa{LimiteFixo: 3_000_000, MultiploRenda: 80}
+	for _, renda := range []int64{math.MaxInt64 / 80, math.MaxInt64/80 + 1, math.MaxInt64 / 2, math.MaxInt64} {
+		if got := limiteDaFaixa(f, &renda); got != f.LimiteFixo {
+			t.Errorf("renda %d: limite %d, quer %d", renda, got, f.LimiteFixo)
+		}
+	}
+	d := avaliar(t, compilar(t, ModeloEmprestimoPF()),
+		Contexto{Score: 920, Renda: ptr[int64](math.MaxInt64 / 2), PedidoValor: 3_000_000, PedidoPrazo: 12})
+	if d.Status != Aprovado || d.Oferta.Valor != 3_000_000 {
+		t.Fatalf("renda enorme: %s %+v %v", d.Status, d.Oferta, d.Motivos)
+	}
+}
+
+// Teste fraco 7: teto do múltiplo de renda no limite exato (1000 compila, 1001 não).
+func TestMultiploRenda_Teto(t *testing.T) {
+	p := ModeloEmprestimoPF()
+	p.Faixas[1].MultiploRenda = maxMultiploRenda
+	if _, err := Compilar(p); err != nil {
+		t.Fatalf("recusou o teto: %v", err)
+	}
+	p.Faixas[1].MultiploRenda = maxMultiploRenda + 1
+	var ep *ErroPolitica
+	if _, err := Compilar(p); !errors.As(err, &ep) || ep.Problemas[0].Regra != "faixas[1]" ||
+		!strings.Contains(ep.Problemas[0].Motivo, "múltiplo de renda acima") {
+		t.Fatalf("aceitou múltiplo acima do teto: %v", err)
+	}
+}
+
+// Achados 3 e 4: o valor de uma condição visual precisa sobreviver ao JSON sem mudar. Acima de 2^53−1 o
+// float64 do JSON já não representa todo inteiro (2^53+1 vira 2^53) e 2^63 virava MinInt64 em amd64.
+func TestValorDaCondicao_InteiroExato(t *testing.T) {
+	const seguro = 1<<53 - 1
+	politicaCom := func(op string, v any) Politica {
+		p := ModeloEmprestimoPF()
+		p.Cortes[0].Condicoes[0] = Condicao{Campo: "score", Operador: op, Valor: v}
+		return p
+	}
+	for _, v := range []any{float64(seguro), float64(-seguro), int64(seguro), seguro, float64(0)} {
+		if _, err := Compilar(politicaCom(">=", v)); err != nil {
+			t.Errorf("recusou %v: %v", v, err)
+		}
+	}
+	recusados := []any{float64(1 << 53), float64(-(1 << 53)), int64(1 << 53), int64(-(1 << 53)), math.Pow(2, 63),
+		-math.Pow(2, 63), math.MaxFloat64, int64(math.MaxInt64)}
+	for _, v := range recusados {
+		if _, err := Compilar(politicaCom(">=", v)); err == nil {
+			t.Errorf("aceitou %v", v)
+		}
+		if _, err := Compilar(politicaCom("in", []any{float64(1), v})); err == nil {
+			t.Errorf("aceitou %v na lista", v)
+		}
+	}
+	// Pelo JSON, como o painel envia: 2^53+1 decodifica como 2^53 e precisa ser recusado.
+	var c Condicao
+	if err := json.Unmarshal([]byte(`{"campo":"score","operador":">=","valor":9007199254740993}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compilar(politicaCom(c.Operador, c.Valor)); err == nil {
+		t.Error("aceitou 2^53+1 vindo do JSON")
 	}
 }
