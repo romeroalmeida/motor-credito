@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	cel.dev/cel-go v0.33.2
 	github.com/go-chi/chi/v5 v5.5.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/pquerna/otp v1.5.0
 	github.com/testcontainers/testcontainers-go v0.44.0
