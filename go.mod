@@ -3,7 +3,7 @@ module github.com/romeroalmeida/motor-credito
 go 1.26.0
 
 require (
-	cel.dev/cel-go v0.33.2
+	cel.dev/cel-go v0.33.4
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/oklog/ulid/v2 v2.1.2
